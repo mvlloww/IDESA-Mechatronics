@@ -10,6 +10,9 @@ import time
 # This is the ArUco library for fiducial markers
 import cv2.aruco as aruco
 
+import matplotlib.pyplot as plt
+
+
 # Load the camera calibration file
 Camera= np.load('Sample_Calibration.npz')
 # Get the camera matrix
@@ -39,8 +42,8 @@ cv2.namedWindow("frame-image", cv2.WINDOW_AUTOSIZE)
 #Position the windows next to eachother
 cv2.moveWindow("frame-image",0,100)
 
-#Create an empty matrix of zeros of size 40x40 for later use
-grid = np.zeros((40,40))
+#Create an empty matrix of ones of size 40x40 for later use
+grid = np.ones((40,40))
 
 # Execute this continuously
 while(True):
@@ -73,10 +76,11 @@ while(True):
 
             # set the area of the detected marker in the grid to white (1)
             corner = corners[i][0]
-            int_corners = corner.astype(int)
-            print (int_corners)
+            corner_grid = corner/27
+            int_corners = corner_grid.astype(int)
+            grid [int_corners[0][1]:int_corners[2][1], int_corners[0][0]:int_corners[2][0]] = 0
 
-            cv2.drawFrameAxes(out, CM, dist_coef, rvec, tvec, 50)
+            #cv2.drawFrameAxes(out, CM, dist_coef, rvec, tvec, 50)
             #cv2.fillConvexPoly(grid, int_corners, 0) 
             #print("Id: ", int(ids[i][0]), "rvecs", rvec[1], " tvecs: ", tvec[1])
     else:
@@ -93,6 +97,10 @@ while(True):
         # Exit the While loop
         break
     
+print (grid)
+plt.imshow(grid, cmap="gray")
+plt.colorbar()
+plt.show()
 
 # When everything done, release the capture
 cap.release()
