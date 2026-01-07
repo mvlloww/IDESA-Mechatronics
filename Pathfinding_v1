@@ -1,131 +1,116 @@
 import numpy as np
 import tcod
 
-# def simplify_path(path):
-#     # Simplify straight segments
-#     new_path = [path[0]]
-#     i = 1
-#     while i < len(path):
-#         start = len(new_path) - 1
-#         # Find end of straight segment
-#         while i < len(path) and (path[i][0] == new_path[-1][0] or path[i][1] == new_path[-1][1]):
-#             new_path.append(path[i])
-#             i += 1
-#         if len(new_path) - start > 2:
-#             # Keep only first and last
-#             new_path = new_path[:start+1] + [new_path[-1]]
-#         # If not, already added
-#     # Now simplify diagonal segments
-#     diag_segments = []
-#     i = 1
-#     while i < len(new_path):
-#         if abs(new_path[i][0] - new_path[i-1][0]) == 1 and abs(new_path[i][1] - new_path[i-1][1]) == 1:
-#             start = i - 1
-#             i += 1
-#             while i < len(new_path) and abs(new_path[i][0] - new_path[i-1][0]) == 1 and abs(new_path[i][1] - new_path[i-1][1]) == 1:
-#                 i += 1
-#             end = i - 1
-#             if end - start > 1:  # more than 2 points
-#                 diag_segments.append((start, end))
-#         else:
-#             i += 1
-#     # Remove middle points of diag segments
-#     to_keep = set()
-#     for start, end in diag_segments:
-#         to_keep.add(start)
-#         to_keep.add(end)
-#     simplified = []
-#     for j in range(len(new_path)):
-#         if j in to_keep or not any(start <= j <= end for start, end in diag_segments):
-#             simplified.append(new_path[j])
-#     return simplified
+def simplify_path(path):
+    cardinal_path = [path[0]]
+    i = 1 #start with second waypoint
 
+    ## deals with straight segments
+    while i < len(path) - 1:
+        n_i = abs(path[i+1][0] - path[i-1][0]) #compares next and previous waypoints i
+        n_j = abs(path[i+1][1] - path[i-1][1]) #compares next and previous waypoints j
+        n_ij = n_i*n_j #if there is a change, n_ij is non-zero
 
+        if n_ij == 0 and (path[i][0] == path[i-1][0] or path[i][1] == path[i-1][1]):
+            pass #skip waypoint
+        else:
+            cardinal_path.append(path[i])
+        i += 1
+    cardinal_path.append(path[-1])
+    cardinal_path = np.array(cardinal_path) #convert to numpy array
+
+    ## deals with falling diagonal segments
+    diagonaldown_path = [cardinal_path[0]]
+    i = 1
+    while i < len(cardinal_path) - 1:
+        c_current = cardinal_path[i]
+        c_prev = cardinal_path[i-1]
+        c_next = cardinal_path[i+1]
+        c_change_i_prev = c_current[0] - c_prev[0]
+        c_change_j_prev = c_current[1] - c_prev[1]
+        c_change_i_next = c_current[0] - c_next[0]
+        c_change_j_next = c_current[1] - c_next[1]
+
+        n_i = c_change_i_prev + c_change_i_next
+        n_j = c_change_j_prev + c_change_j_next
+
+        if n_i == 0 and n_j == 0:
+            pass #skip waypoint
+        else:
+            diagonaldown_path.append(cardinal_path[i])
+        i += 1
+    diagonaldown_path.append(cardinal_path[-1])
+
+    diagonaldown_path = np.array(diagonaldown_path)
+    
+    ## deals with rising diagonal segments
+
+    return cardinal_path, diagonaldown_path
 
 # Create a 20x20 grid, 1 = walkable, 0 = wall
-grid = np.ones((5, 10), np.int8)
+grid = np.ones((10, 10), np.int8)
 
 # Add some obstacles
-grid[1:3, 1:5] = 0  # vertical wall
-grid[4, 1:8] = 0  # horizontal wall
-grid[1:4,8] = 0  # left wall
-grid[2,5:7] = 0  # right wall
+# grid[1:3, 1:5] = 0  # vertical wall
+# grid[4, 1:8] = 0  # horizontal wall
+# grid[1:4,8] = 0  # left wall
+# grid[2,5:7] = 0  # right wall
+# grid[0,6] = 0
+
+#Test diagonal pathfinding
+grid[0, 1:8] = 0
+grid[1, 2:7] = 0
+grid[2, 3:6] = 0
+grid[3, 4:5] = 0
+
+# Create maze-like obstructions
+# grid[1, 1:9] = 0  # Horizontal wall
+# grid[3, 2:8] = 0  # Horizontal wall
+# grid[5, 1:9] = 0  # Horizontal wall
+# grid[7, 2:8] = 0  # Horizontal wall
+
+# Add some vertical walls
+# grid[2:8, 2] = 0
+
 
 # Create the graph
 # graph = tcod.path.SimpleGraph(cost=grid, cardinal=1, diagonal=2)
 
 # Find the path from start to end
 start_points=[(0,0)]
-end_points=[(3,7)]
+end_points=[(4,9)]
 path = tcod.path.path2d(cost = grid, start_points=start_points, end_points=end_points, cardinal=10, diagonal=14)
-print(grid)
+
 print(path)
-print(type(path))
+
 display_grid = grid.astype(str)
+display_grid[tuple(np.array(start_points).T)] = 'S'
+display_grid[tuple(np.array(end_points).T)] = 'E'
+print(display_grid)
 display_grid[tuple(np.array(path).T)] = '-'
 display_grid[tuple(np.array(start_points).T)] = 'S'
 display_grid[tuple(np.array(end_points).T)] = 'E'
 print('with repeated direction instructions:')
 print(display_grid)
 
-########## TESTING SIMPLIFY FUNCTION ##########
-cardinal_path = [path[0]]
-i = 1 #start with second waypoint
-
-## deals with straight segments
-while i < len(path) - 1:
-    n_i = abs(path[i+1][0] - path[i-1][0]) #compares next and previous waypoints i
-    n_j = abs(path[i+1][1] - path[i-1][1]) #compares next and previous waypoints j
-    n_ij = n_i*n_j #if there is a change, n_ij is non-zero
-    if not (n_ij == 0):
-        cardinal_path.append(path[i])
-    i += 1
-cardinal_path.append(path[-1])
-cardinal_path = np.array(cardinal_path) #convert to numpy array
-
-
-## deals with diagonal segments
-diagonal_path = [cardinal_path[0]]
-i = 1
-while i < len(cardinal_path) - 1:
-    c_current = cardinal_path[i]
-    c_prev = cardinal_path[i-1]
-    c_next = cardinal_path[i+1]
-    c_change_i_prev = abs(c_current[0] - c_prev[0])
-    c_change_j_prev = abs(c_current[1] - c_prev[1])
-    c_change_i_next = abs(c_current[0] - c_next[0])
-    c_change_j_next = abs(c_current[1] - c_next[1])
-
-    if not (c_change_i_prev == c_change_j_prev == c_change_i_next == c_change_j_next and c_change_j_next == 1):
-        diagonal_path.append(cardinal_path[i])
-    i += 1
-diagonal_path.append(cardinal_path[-1])
-
-diagonal_path = np.array(diagonal_path)
-
-# test = cardinal_path[1] - 1
-# # cardinal_path_disp = cardinal_path.tolist()
-# print('cardinal path: ')
-# print(cardinal_path[1])
-# # print(cardinal_path_disp)
-# print('this is the test:' )
-# print(test)
+cardinal_path, diagonaldown_path = simplify_path(path)
 
 print('cardinal path:')
 print(cardinal_path)
 
 display_card_grid = grid.astype(str)
-display_card_grid[tuple(np.array(cardinal_path).T)] = '-'
+display_card_grid[tuple(np.array(cardinal_path).T)] = 'x'
 display_card_grid[tuple(np.array(start_points).T)] = 'S'
 display_card_grid[tuple(np.array(end_points).T)] = 'E'
 print('simplified cardinal instructions:')
 print(display_card_grid)
 
-print('diagonal/simplified path:')
-print(diagonal_path)
+# print('diagonal/simplified path:')
+# print(diagonal_path)
 
 display_simple_grid = grid.astype(str)
-display_simple_grid[tuple(np.array(diagonal_path).T)] = '-'
+display_simple_grid[tuple(np.array(path).T)] = '-'
+display_simple_grid[tuple(np.array(diagonaldown_path).T)] = 'x'
 display_simple_grid[tuple(np.array(start_points).T)] = 'S'
 display_simple_grid[tuple(np.array(end_points).T)] = 'E'
 print('simplified instructions:')
