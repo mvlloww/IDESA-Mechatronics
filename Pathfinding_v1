@@ -60,6 +60,7 @@ end_points=[(3,7)]
 path = tcod.path.path2d(cost = grid, start_points=start_points, end_points=end_points, cardinal=10, diagonal=14)
 print(grid)
 print(path)
+print(type(path))
 display_grid = grid.astype(str)
 display_grid[tuple(np.array(path).T)] = '-'
 display_grid[tuple(np.array(start_points).T)] = 'S'
@@ -67,10 +68,7 @@ display_grid[tuple(np.array(end_points).T)] = 'E'
 print('with repeated direction instructions:')
 print(display_grid)
 
-path = path.tolist()
-
 ########## TESTING SIMPLIFY FUNCTION ##########
-
 cardinal_path = [path[0]]
 i = 1 #start with second waypoint
 
@@ -83,24 +81,53 @@ while i < len(path) - 1:
         cardinal_path.append(path[i])
     i += 1
 cardinal_path.append(path[-1])
+cardinal_path = np.array(cardinal_path) #convert to numpy array
 
-#deals with diagonal segments
-# print(cardinal_path)
+
+## deals with diagonal segments
+diagonal_path = [cardinal_path[0]]
+i = 1
+while i < len(cardinal_path) - 1:
+    c_current = cardinal_path[i]
+    c_prev = cardinal_path[i-1]
+    c_next = cardinal_path[i+1]
+    c_change_i_prev = abs(c_current[0] - c_prev[0])
+    c_change_j_prev = abs(c_current[1] - c_prev[1])
+    c_change_i_next = abs(c_current[0] - c_next[0])
+    c_change_j_next = abs(c_current[1] - c_next[1])
+
+    if not (c_change_i_prev == c_change_j_prev == c_change_i_next == c_change_j_next and c_change_j_next == 1):
+        diagonal_path.append(cardinal_path[i])
+    i += 1
+diagonal_path.append(cardinal_path[-1])
+
+diagonal_path = np.array(diagonal_path)
+
+# test = cardinal_path[1] - 1
+# # cardinal_path_disp = cardinal_path.tolist()
+# print('cardinal path: ')
+# print(cardinal_path[1])
+# # print(cardinal_path_disp)
+# print('this is the test:' )
+# print(test)
+
+print('cardinal path:')
+print(cardinal_path)
+
+display_card_grid = grid.astype(str)
+display_card_grid[tuple(np.array(cardinal_path).T)] = '-'
+display_card_grid[tuple(np.array(start_points).T)] = 'S'
+display_card_grid[tuple(np.array(end_points).T)] = 'E'
+print('simplified cardinal instructions:')
+print(display_card_grid)
+
+print('diagonal/simplified path:')
+print(diagonal_path)
 
 display_simple_grid = grid.astype(str)
-display_simple_grid[tuple(np.array(cardinal_path).T)] = '-'
+display_simple_grid[tuple(np.array(diagonal_path).T)] = '-'
 display_simple_grid[tuple(np.array(start_points).T)] = 'S'
 display_simple_grid[tuple(np.array(end_points).T)] = 'E'
-print('simplified cardinal instructions:')
+print('simplified instructions:')
 print(display_simple_grid)
-
-
-# print('Simplified path:')
-# print(simplified)
-# display_grid = grid.astype(str)
-# display_grid[tuple(np.array(simplified).T)] = '-'
-# display_grid[tuple(np.array(start_points).T)] = 'S'
-# display_grid[tuple(np.array(end_points).T)] = 'E'
-# print('Simplified path visualization:')
-# print(display_grid)
 
