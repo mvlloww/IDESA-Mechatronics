@@ -42,15 +42,14 @@ cv2.namedWindow("frame-image", cv2.WINDOW_AUTOSIZE)
 #Position the windows next to eachother
 cv2.moveWindow("frame-image",0,100)
 
-#Create an empty matrix of ones of size 40x40 for later use
-grid = np.ones((40,40))
-
 # Execute this continuously
 while(True):
     
     # Start the performance clock
     start = time.perf_counter()
-    
+    # Reset the 40x40 grid for this frame
+    grid = np.ones((40,40))
+
     # Capture current frame from the camera
     ret, frame = cap.read()
     
@@ -60,7 +59,6 @@ while(True):
     # Detect ArUco markers in the grey image
     corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)  
 
-
     # If markers are detected, draw them, estimate pose and overlay axes
     if ids is not None and len(ids) > 0:
         out = aruco.drawDetectedMarkers(frame, corners, ids)
@@ -68,9 +66,9 @@ while(True):
         # Calculate the pose of each detected marker
         rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, marker_size, CM, dist_coef)
         
-        border = 3
+        border = 1
         for i in range(len(ids)):
-            # Project the marker origin (0,0,0) into image pixels using the detected pose
+            # Project the marker origin (0,0,0) into qimage pixels using the detected pose
             center_3d = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
             center_2d, _ = cv2.projectPoints(center_3d, rvecs[i], tvecs[i], CM, dist_coef)
             center_pixel = center_2d[0][0].astype(int)
