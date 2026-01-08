@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 
 
 # Load the camera calibration file
-Camera= np.load('Sample_Calibration.npz')
+Camera= np.load('Calibration.npz')
 # Get the camera matrix
 CM = Camera['CM']
 # Get the distortion coefficients
