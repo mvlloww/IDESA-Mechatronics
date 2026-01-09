@@ -43,7 +43,7 @@ cv2.namedWindow("frame-image", cv2.WINDOW_NORMAL)
 cv2.moveWindow("frame-image",0,100)
 
 #Create a 40x40 grid initialized to 1s
-grid = np.ones((40,40))
+grid = np.ones((40,40),np.int8)
 # Grid dimensions (used for mapping pixel coords -> grid indices)
 grid_height, grid_width = grid.shape
 # Define the 3D coordinates of the center of the marker in its own coordinate system
