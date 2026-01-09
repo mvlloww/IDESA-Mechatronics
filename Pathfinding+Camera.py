@@ -106,7 +106,7 @@ center_3d = np.array([[half, half, 0]], dtype=np.float32)
 # Precompute grid coordinates for masking
 y_coords, x_coords = np.ogrid[:grid_height, :grid_width]
 # Define the radius around the center of obstacle (can calibrate)
-radius = 1
+radius = 3
 
 # Capture frame continuously
 while(True):
@@ -172,11 +172,11 @@ while(True):
     cardinal_path, diagonaldown_path = simplify_path(path)
     
     # Display pathfinding results
-    display_simple_grid = grid.astype(int)
-    display_simple_grid[tuple(np.array(path).T)] = 1
-    display_simple_grid[tuple(np.array(diagonaldown_path).T)] = 0.5
-    display_simple_grid[tuple(np.array(start_points).T)] = 0.75
-    display_simple_grid[tuple(np.array(end_points).T)] = 0.75
+    # display_simple_grid = grid.astype(int)
+    # display_simple_grid[tuple(np.array(path).T)] = 1
+    # display_simple_grid[tuple(np.array(diagonaldown_path).T)] = 0.5
+    # display_simple_grid[tuple(np.array(start_points).T)] = 0.75
+    # display_simple_grid[tuple(np.array(end_points).T)] = 0.75
     # print('simplified instructions:')
     # print(display_simple_grid)
     # plt.imshow(grid, cmap="gray")
@@ -194,16 +194,37 @@ while(True):
         # Exit the While loop
         break
     
-print (grid)
+print(grid)
+plt.figure(1)
 plt.imshow(grid, cmap="gray")
 plt.colorbar()
-plt.show(1)
+plt.show()
+
+# Use float so fractional values (0.5, 0.75) are preserved
+display_simple_grid = grid.astype(float)
+# Safe assignments: only assign if the path arrays are non-empty and within bounds
+if len(path) > 0:
+    idx = tuple(np.array(path).T)
+    display_simple_grid[idx] = 0.25
+if len(diagonaldown_path) > 0:
+    idx = tuple(np.array(diagonaldown_path).T)
+    display_simple_grid[idx] = 0.5
+if len(start_points) > 0:
+    idx = tuple(np.array(start_points).T)
+    display_simple_grid[idx] = 0.75
+if len(end_points) > 0:
+    idx = tuple(np.array(end_points).T)
+    display_simple_grid[idx] = 0.75
 
 print('simplified instructions:')
 print(display_simple_grid)
-plt.imshow(grid, cmap="gray")
+print('unique values in display_simple_grid:', np.unique(display_simple_grid))
+plt.figure(2)
+plt.imshow(display_simple_grid, cmap="gray", vmin=0, vmax=1)
 plt.colorbar()
-plt.show(2)
+plt.title('display_simple_grid')
+plt.tight_layout()
+plt.show()
 
 # When everything done, release the capture
 cap.release()
