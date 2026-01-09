@@ -33,21 +33,24 @@ parameters = aruco.DetectorParameters()
 cap = cv2.VideoCapture(0)
 
 # Set the width and heigth of the camera to 
-cap.set(3,1080)
-cap.set(4,1080)
+cap.set(3,4000)
+cap.set(4,4000)
 
 #Create two opencv named windows
-cv2.namedWindow("frame-image", cv2.WINDOW_AUTOSIZE)
+cv2.namedWindow("frame-image", cv2.WINDOW_NORMAL)
 
 #Position the windows next to eachother
 cv2.moveWindow("frame-image",0,100)
 
 #Create a 40x40 grid initialized to 1s
 grid = np.ones((40,40))
+# Grid dimensions (used for mapping pixel coords -> grid indices)
+grid_height, grid_width = grid.shape
 # Define the 3D coordinates of the center of the marker in its own coordinate system
-center_3d = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+half = marker_size / 2
+center_3d = np.array([[half, half, 0]], dtype=np.float32)
 # Precompute grid coordinates for masking
-y_coords, x_coords = np.ogrid[:40, :40]
+y_coords, x_coords = np.ogrid[:grid_height, :grid_width]
 # Define the radius around the center of obstacle (can calibrate)
 radius = 1
 
@@ -81,8 +84,11 @@ while(True):
             center_2d, _ = cv2.projectPoints(center_3d, rvecs[i], tvecs[i], CM, dist_coef)
             center_pixel = center_2d[0][0].astype(int)
 
-            # Scale to your 40x40 grid and clamp to valid indices (0..39)
-            center_grid = np.clip((center_pixel // 27), 0, 39)
+            # Map pixel coordinates to grid (uses current frame size)
+            img_h, img_w = frame.shape[:2]
+            grid_x = int(center_pixel[0] / img_w * grid_width)
+            grid_y = int(center_pixel[1] / img_h * grid_height)
+            center_grid = np.clip([grid_x, grid_y], 0, [grid_width - 1, grid_height - 1]).astype(int)
 
             # Draw circle around center point
             x, y = center_grid
