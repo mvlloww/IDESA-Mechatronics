@@ -126,8 +126,8 @@ while(True):
     start = time.perf_counter()
     # Reset the 40x40 grid for this frame
     grid.fill(1)
-    # Open a list for sorting targets
-    target_list = []
+    # Open a dictionary for sorting targets
+    target_dict = {}
 
     # Capture current frame from the camera
     ret, frame = cap.read()
@@ -171,19 +171,25 @@ while(True):
             mask = (x_coords - x)**2 + (y_coords - y)**2 <= radius**2
             grid[mask] = 1
             
-            end_point = end_points.get(ids[i][0], None)
+            marker_id = int(ids[i][0])
+            end_point = end_points.get(marker_id, None)
+            print ('0')
             if end_point is not None:
                 # tcod expects (row, col) pairs. start_grid is [grid_x, grid_y], so convert.
                 start_pt = (int(start_grid[1]), int(start_grid[0]))  # (row, col)
                 end_pt = (int(end_point[0]), int(end_point[1]))      # (row, col)
+                print ('1')
                 if start_pt != end_pt:
                     path = tcod.path.path2d(cost=grid, start_points=[start_pt], end_points=[end_pt], cardinal=10, diagonal=14)
-                    target_list.append((ids[i], path))
-
-        # Sort target_list by path length (shortest first)
-        target_list.sort(key=lambda p: len(p[1]))
-        # Optional: tie-break by marker id (ascending)
-        # target_list.sort(key=lambda p: (len(p[1]), int(p[0][0])))
+                    print ('path',path)
+                    num_path = path.shape[0]
+                    target_dict[marker_id] = num_path
+                    print(f"Marker {marker_id}: path_waypoints = {path}, shape = {path.shape}, num_path = {num_path}")
+                    print ('2')
+        
+        # Sort dictionary by path length (ascending order)
+        target_dict = dict(sorted(target_dict.items(), key=lambda item: item[1]))
+        print("Sorted target dict:", target_dict)
 
     else:
         out = frame
@@ -239,7 +245,7 @@ while(True):
     # If the button q is pressed in one of the windows 
     if cv2.waitKey(20) & 0xFF == ord('q'):
         # Print last sorted target_list before exiting
-        print(target_list)
+        print(target_dict)
         # Exit the While loop
         break
     
@@ -250,4 +256,4 @@ cv2.destroyAllWindows()
 # exit the kernel
 exit(0)
 
-print (target_list)
+print (target_dict)
