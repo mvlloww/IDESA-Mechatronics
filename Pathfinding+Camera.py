@@ -190,54 +190,105 @@ while(True):
         # Sort dictionary by path length (ascending order)
         target_dict = dict(sorted(target_dict.items(), key=lambda item: item[1]))
         print("Sorted target dict:", target_dict)
-
+        
+        # Sequential pathfinding loop: process targets one by one
+        target_ids = list(target_dict.keys())
+        
+        quit_flag = False
+        for target_id in target_ids:
+            if quit_flag:
+                break
+            
+            # Recapture frame to ensure we have fresh data
+            ret, frame = cap.read()
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
+                
+            # Get the marker's current center as start point
+            marker_idx = None
+            for i in range(len(ids)):
+                if int(ids[i][0]) == target_id:
+                    marker_idx = i
+                    break
+            
+            if marker_idx is None:
+                # Marker not visible, skip
+                continue
+            
+            # Calculate pose for initial frame
+            rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, marker_size, CM, dist_coef)
+            
+            # Get end point from dictionary
+            end_point = end_points.get(target_id, None)
+            if end_point is None:
+                continue
+            end_pt = (int(end_point[0]), int(end_point[1]))  # (row, col)
+            
+            # Define distance threshold (in grid units)
+            distance_threshold = 1.5
+            
+            # While loop to continuously navigate until reaching destination
+            while True:
+                # Recapture frame to get updated marker position
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
+                
+                # Check if markers detected
+                if ids is None or len(ids) == 0:
+                    break
+                
+                # Find current marker
+                marker_idx = None
+                for i in range(len(ids)):
+                    if int(ids[i][0]) == target_id:
+                        marker_idx = i
+                        break
+                
+                if marker_idx is None:
+                    break
+                
+                # Recalculate pose for updated frame
+                rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, marker_size, CM, dist_coef)
+                
+                # Compute current center position
+                center_2d, _ = cv2.projectPoints(center_3d, rvecs[marker_idx], tvecs[marker_idx], CM, dist_coef)
+                center_pixel = center_2d[0][0].astype(int)
+                img_h, img_w = frame.shape[:2]
+                grid_x = int(center_pixel[0] / img_w * grid_width)
+                grid_y = int(center_pixel[1] / img_h * grid_height)
+                start_grid = np.clip([grid_x, grid_y], 0, [grid_width - 1, grid_height - 1]).astype(int)
+                start_pt = (int(start_grid[1]), int(start_grid[0]))  # (row, col)
+                
+                # Calculate distance to end point
+                distance = np.sqrt((start_pt[0] - end_pt[0])**2 + (start_pt[1] - end_pt[1])**2)
+                
+                # Check if reached destination
+                if distance < distance_threshold:
+                    print(f"Target {target_id} reached destination!")
+                    break
+                else:
+                    # Compute path using tcod.path.path2d
+                    path = tcod.path.path2d(cost=grid, start_points=[start_pt], end_points=[end_pt], cardinal=10, diagonal=14)
+                    path_waypoints = np.asarray(path[1])
+                    print(f"Processing target {target_id}: distance = {distance:.2f}, waypoints = {path_waypoints.shape[0]}")
+                
+                # Display frame
+                cv2.imshow('frame-image', frame)
+                if cv2.waitKey(20) & 0xFF == ord('q'):
+                    quit_flag = True
+                    break
+        
+        if quit_flag:
+            break
     else:
         out = frame
 
-    # # Implement pathfinding function
-    # # path = tcod.path.path2d(cost = grid, start_points=center_grid, end_points=end_points.get(i,None), cardinal=10, diagonal=14)
-    # # Simplify path to reduce waypoints
-    # cardinal_path, diagonaldown_path = simplify_path(path)
-
-    # ## Display grid and path using Matplotlib within OpenCV window##
-    # # Use float so fractional values (0.5, 0.75) are preserved
-    # display_simple_grid = grid.astype(float)
-    # # Safe assignments: only assign if the path arrays are non-empty and within bounds
-    # if len(path) > 0:
-    #     idx = tuple(np.array(path).T)
-    #     display_simple_grid[idx] = 0.25
-    # if len(diagonaldown_path) > 0:
-    #     idx = tuple(np.array(diagonaldown_path).T)
-    #     display_simple_grid[idx] = 0.5
-    # if len(start_points) > 0:
-    #     idx = tuple(np.array(start_points).T)
-    #     display_simple_grid[idx] = 0.75
-    # if len(end_points) > 0:
-    #     idx = tuple(np.array(end_points).T)
-    #     display_simple_grid[idx] = 0.75
-    
-    # fig, ax = plt.subplots(figsize=(4, 4), dpi=100)
-    # ax.imshow(display_simple_grid, cmap="gray", vmin=0, vmax=1)
-    # ax.set_title("Grid & Path")
-    # ax.axis("off")
-
-    # # Render the Matplotlib figure
-    # fig.canvas.draw()
-    # # Get RGBA buffer from the figure
-    # buf = fig.canvas.buffer_rgba()
-    # # Convert buffer to NumPy array
-    # plot = np.asarray(buf)
-    # # Convert RGBA/RGB → BGR for OpenCV
-    # plot = cv2.cvtColor(plot, cv2.COLOR_RGB2BGR)
-    # plt.close(fig)  # IMPORTANT: prevent memory leak
-
-    # # Overlay the plot onto the frame
-    # h, w = plot.shape[:2]
-    # frame[0:h, 0:w] = plot
-
     # Display the original frame in a window
     cv2.imshow('frame-image',frame)
-
 
     # Stop the performance counter
     end = time.perf_counter()
@@ -255,5 +306,3 @@ cap.release()
 cv2.destroyAllWindows()
 # exit the kernel
 exit(0)
-
-print (target_dict)
