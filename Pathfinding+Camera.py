@@ -160,44 +160,65 @@ while(True):
     else:
         out = frame
 
-    # Implement pathfinging function 
+    # Implement pathfinding function 
     path = tcod.path.path2d(cost = grid, start_points=start_points, end_points=end_points, cardinal=10, diagonal=14)
     # Simplify path to reduce waypoints
     cardinal_path, diagonaldown_path = simplify_path(path)
 
     # Use float so fractional values (0.5, 0.75) are preserved
     display_simple_grid = grid.astype(float)
-    # Safe assignments: only assign if the path arrays are non-empty and within bounds
-    if len(path) > 0:
-        idx = tuple(np.array(path).T)
-        display_simple_grid[idx] = 0.25
-    if len(diagonaldown_path) > 0:
-        idx = tuple(np.array(diagonaldown_path).T)
-        display_simple_grid[idx] = 0.5
-    if len(start_points) > 0:
-        idx = tuple(np.array(start_points).T)
-        display_simple_grid[idx] = 0.75
-    if len(end_points) > 0:
-        idx = tuple(np.array(end_points).T)
-        display_simple_grid[idx] = 0.75
-    
-    fig, ax = plt.subplots(figsize=(4, 4), dpi=100)
-    ax.imshow(display_simple_grid, cmap="gray", vmin=0, vmax=1)
-    ax.set_title("Grid & Path")
-    ax.axis("off")
 
-    # Render the Matplotlib figure
+    # safe helper to place points (tcod returns (x,y) = (col,row))
+    def set_display_values(points, value):
+        if len(points) == 0:
+            return
+        arr = np.array(points, dtype=int)
+        cols = np.clip(arr[:, 0], 0, grid_width - 1)
+        rows = np.clip(arr[:, 1], 0, grid_height - 1)
+        display_simple_grid[rows, cols] = value
+
+    set_display_values(path, 0.25)
+    set_display_values(diagonaldown_path, 0.5)
+    set_display_values(start_points, 0.75)
+    set_display_values(end_points, 0.75)
+
+    # Render grid plot with transparent background and 1:1 grid-cell pixels
+    img_h, img_w = frame.shape[:2]
+    cell_px = max(1, min(img_w // grid_width, img_h // grid_height))  # cells per pixel
+    w_px = grid_width * cell_px
+    h_px = grid_height * cell_px
+
+    fig, ax = plt.subplots(figsize=(w_px / 100, h_px / 100), dpi=100, facecolor='none')
+    ax.imshow(display_simple_grid, cmap="gray", vmin=0, vmax=1, interpolation='nearest', aspect='equal')
+    ax.set_title("Grid & Path")
+    ax.axis('off')
+    plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    fig.patch.set_alpha(0)
+    ax.patch.set_alpha(0)
+
+    # Render and get RGBA buffer
     fig.canvas.draw()
-    # Get RGBA buffer from the figure
     buf = fig.canvas.buffer_rgba()
-    # Convert buffer to NumPy array
-    plot = np.asarray(buf)
-    # Convert RGBA/RGB → BGR for OpenCV
-    plot = cv2.cvtColor(plot, cv2.COLOR_RGB2BGR)
+    plot = np.asarray(buf)  # RGBA
     plt.close(fig)  # IMPORTANT: prevent memory leak
 
-    h, w = plot.shape[:2]
-    frame[0:h, 0:w] = plot
+    ph, pw = plot.shape[:2]
+    # Blend RGBA plot over the top-left region of the video frame (preserve transparency)
+    if ph <= img_h and pw <= img_w:
+        overlay_rgb = plot[..., :3].astype(float)
+        alpha = (plot[..., 3:4].astype(float) / 255.0)
+        frame_region = frame[0:ph, 0:pw].astype(float)[..., ::-1]  # BGR -> RGB
+        combined_rgb = overlay_rgb * alpha + frame_region * (1 - alpha)
+        frame[0:ph, 0:pw] = (combined_rgb[..., ::-1]).astype(np.uint8)  # RGB -> BGR
+    else:
+        # if plot larger than frame (shouldn't happen with cell_px calculation), resize and blend
+        plot_resized = cv2.resize(plot, (min(pw, img_w), min(ph, img_h)), interpolation=cv2.INTER_AREA)
+        pr_h, pr_w = plot_resized.shape[:2]
+        overlay_rgb = plot_resized[..., :3].astype(float)
+        alpha = (plot_resized[..., 3:4].astype(float) / 255.0)
+        frame_region = frame[0:pr_h, 0:pr_w].astype(float)[..., ::-1]
+        combined_rgb = overlay_rgb * alpha + frame_region * (1 - alpha)
+        frame[0:pr_h, 0:pr_w] = (combined_rgb[..., ::-1]).astype(np.uint8)
 
     # Display the original frame in a window
     cv2.imshow('frame-image',frame)
