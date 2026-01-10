@@ -165,9 +165,43 @@ while(True):
     # Simplify path to reduce waypoints
     cardinal_path, diagonaldown_path = simplify_path(path)
 
+    # Use float so fractional values (0.5, 0.75) are preserved
+    display_simple_grid = grid.astype(float)
+    # Safe assignments: only assign if the path arrays are non-empty and within bounds
+    if len(path) > 0:
+        idx = tuple(np.array(path).T)
+        display_simple_grid[idx] = 0.25
+    if len(diagonaldown_path) > 0:
+        idx = tuple(np.array(diagonaldown_path).T)
+        display_simple_grid[idx] = 0.5
+    if len(start_points) > 0:
+        idx = tuple(np.array(start_points).T)
+        display_simple_grid[idx] = 0.75
+    if len(end_points) > 0:
+        idx = tuple(np.array(end_points).T)
+        display_simple_grid[idx] = 0.75
+    
+    fig, ax = plt.subplots(figsize=(4, 4), dpi=100)
+    ax.imshow(display_simple_grid, cmap="gray", vmin=0, vmax=1)
+    ax.set_title("Grid & Path")
+    ax.axis("off")
+
+    # Render the Matplotlib figure
+    fig.canvas.draw()
+    # Get RGBA buffer from the figure
+    buf = fig.canvas.buffer_rgba()
+    # Convert buffer to NumPy array
+    plot = np.asarray(buf)
+    # Convert RGBA/RGB → BGR for OpenCV
+    plot = cv2.cvtColor(plot, cv2.COLOR_RGB2BGR)
+    plt.close(fig)  # IMPORTANT: prevent memory leak
+
+    h, w = plot.shape[:2]
+    frame[0:h, 0:w] = plot
+
     # Display the original frame in a window
     cv2.imshow('frame-image',frame)
-    cv2.line(frame, start_points[0], end_points[0], (255, 0, 0), 2)
+    # cv2.line(frame, start_points[0], end_points[0], (255, 0, 0), 2)
 
     # Stop the performance counter
     end = time.perf_counter()
@@ -177,37 +211,37 @@ while(True):
         # Exit the While loop
         break
     
-print(grid)
-plt.figure(1)
-plt.imshow(grid, cmap="gray")
-plt.colorbar()
-plt.show()
+# print(grid)
+# plt.figure(1)
+# plt.imshow(grid, cmap="gray")
+# plt.colorbar()
+# plt.show()
 
-# Use float so fractional values (0.5, 0.75) are preserved
-display_simple_grid = grid.astype(float)
-# Safe assignments: only assign if the path arrays are non-empty and within bounds
-if len(path) > 0:
-    idx = tuple(np.array(path).T)
-    display_simple_grid[idx] = 0.25
-if len(diagonaldown_path) > 0:
-    idx = tuple(np.array(diagonaldown_path).T)
-    display_simple_grid[idx] = 0.5
-if len(start_points) > 0:
-    idx = tuple(np.array(start_points).T)
-    display_simple_grid[idx] = 0.75
-if len(end_points) > 0:
-    idx = tuple(np.array(end_points).T)
-    display_simple_grid[idx] = 0.75
+# # Use float so fractional values (0.5, 0.75) are preserved
+# display_simple_grid = grid.astype(float)
+# # Safe assignments: only assign if the path arrays are non-empty and within bounds
+# if len(path) > 0:
+#     idx = tuple(np.array(path).T)
+#     display_simple_grid[idx] = 0.25
+# if len(diagonaldown_path) > 0:
+#     idx = tuple(np.array(diagonaldown_path).T)
+#     display_simple_grid[idx] = 0.5
+# if len(start_points) > 0:
+#     idx = tuple(np.array(start_points).T)
+#     display_simple_grid[idx] = 0.75
+# if len(end_points) > 0:
+#     idx = tuple(np.array(end_points).T)
+#     display_simple_grid[idx] = 0.75
 
-print('simplified instructions:')
-print(display_simple_grid)
-print('unique values in display_simple_grid:', np.unique(display_simple_grid))
-plt.figure(2)
-plt.imshow(display_simple_grid, cmap="gray", vmin=0, vmax=1)
-plt.colorbar()
-plt.title('display_simple_grid')
-plt.tight_layout()
-plt.show()
+# print('simplified instructions:')
+# print(display_simple_grid)
+# print('unique values in display_simple_grid:', np.unique(display_simple_grid))
+# plt.figure(2)
+# plt.imshow(display_simple_grid, cmap="gray", vmin=0, vmax=1)
+# plt.colorbar()
+# plt.title('display_simple_grid')
+# plt.tight_layout()
+# plt.show()
 
 # When everything done, release the capture
 cap.release()
