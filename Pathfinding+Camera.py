@@ -1,22 +1,11 @@
-# This is the vision library OpenCV
-import cv2
-# This is a library for mathematical functions for python (used later)
-import numpy as np
-# This is a library to get access to time-related functionalities
-import time
-# This is the ArUco library for fiducial markers
-import cv2.aruco as aruco
-# This is a library for plotting and visualizing data
-import matplotlib.pyplot as plt
-# This is a library for roguelike game development (used for pathfinding)
-import tcod
-
-## Pathfinding setup ## (current location of ball)
-start_points=[(0,0)]
-end_points=[(39,39)]
-
-# Function to simplify pathfinding -> ball do not move and stop at every grid cell
 def simplify_path(path):
+    '''
+    simplify_path function 
+
+    :input: array of (i,j) grid coordinates from A* pathfinding algorithm
+    :param path: delete any repeating outputs between two point on the grid. So the ball movement will be continuous instead of stopping every second.
+    :return: cardinal_path (array: only changed horizontal and vertical), diagonaldown_path (array: horizontal, vertical and diagonal changes made) 
+    '''
     cardinal_path = [path[0]]
     i = 1 #start with second waypoint
 
@@ -61,15 +50,39 @@ def simplify_path(path):
     ## deals with rising diagonal segments
 
     return cardinal_path, diagonaldown_path
+# This is the vision library OpenCV
+import cv2
+# This is a library for mathematical functions for python (used later)
+import numpy as np
+# This is a library to get access to time-related functionalities
+import time
+# This is the ArUco library for fiducial markers
+import cv2.aruco as aruco
+# This is a library for plotting and visualizing data
+import matplotlib.pyplot as plt
+# This is a library for roguelike game development (used for pathfinding)
+import tcod
 
-# Load the camera calibration file
+# to be changed later with camera input 
+start_points=[(0,0)]
+end_points=[(19,39)]
+
+'''
+Initiate camera and set parameters
+1. Load camera calibration file
+2. Load ArUco dictionary and set detection parameters
+3. Open camera and set resolution to 1280x720
+4. Create window for camera feed
+5. Create grid for pathfinding and set parameters
+'''
+# 1. Load the camera calibration file
 Camera= np.load('Calibration.npz')
 # Get the camera matrix
 CM = Camera['CM']
 # Get the distortion coefficients
 dist_coef = Camera['dist_coef']
 
-# Load ArUco Disctionary 4x4_50 and set detection parameters
+# 2. Load ArUco Disctionary 4x4_50 and set detection parameters
 # Define the size of the aruco marker in mm
 marker_size = 40
 # Define the aruco dictionary
@@ -77,40 +90,35 @@ aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
 # Define the aruco detection parameters
 parameters = aruco.DetectorParameters()
 
-## Camera setup ##
-
-# Select the first camera (0) that is connected to the machine
-# in Laptops should be the build-in camera
-# open camera with DirectShow (Windows)
+# 3. Opens camera and set resolution to 1280x720
+# CAP_DSHOW to make sure it uses DirectShow backend on Windows (more stable)
 cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
-# optional: check opened
-if not cap.isOpened():
-    raise RuntimeError("Camera not available (cap.isOpened() is False)")
-
-#Create two opencv named windows
+# 4. Create window for camera feed
+#Create window
 cv2.namedWindow("frame-image", cv2.WINDOW_NORMAL)
-
-#Position the windows next to eachother
+#Position the window at x=0,y=100 on the computer screen
 cv2.moveWindow("frame-image",0,100)
 
-#Create a 40x40 grid initialized to 1s
-grid = np.ones((40,40),np.int8)
-# Grid dimensions (used for mapping pixel coords -> grid indices)
+# 5. Create grid for pathfinding and set parameters
+# Create a 20x40 grid all initialized to 1
+grid = np.ones((20,40),np.int8)
+# Detect set height and width of grid
 grid_height, grid_width = grid.shape
 # Define the 3D coordinates of the center of the marker in its own coordinate system
+# Output marker center is at the corner of the marker so need this
 half = marker_size / 2
 center_3d = np.array([[half, half, 0]], dtype=np.float32)
+
 # Precompute grid coordinates for masking
 y_coords, x_coords = np.ogrid[:grid_height, :grid_width]
 # Define the radius around the center of obstacle (can calibrate)
-radius = 3
+radius = 1
 
 # Capture frame continuously
 while(True):
-    
     # Start the performance clock
     start = time.perf_counter()
     # Reset the 40x40 grid for this frame
@@ -118,20 +126,6 @@ while(True):
 
     # Capture current frame from the camera
     ret, frame = cap.read()
-    if not ret or frame is None or frame.size == 0:
-        print("Warning: failed to read frame; attempting to reopen camera...")
-        # small retry: try reopening up to 3 times
-        cap.release()
-        for _ in range(3):
-            time.sleep(0.5)
-            cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-            if cap.isOpened():
-                ret, frame = cap.read()
-                if ret and frame is not None and frame.size > 0:
-                    break
-        else:
-            print("Error: unable to recover camera; skipping this loop iteration")
-            continue
 
     # Convert the image from the camera to Gray scale
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -170,22 +164,11 @@ while(True):
     path = tcod.path.path2d(cost = grid, start_points=start_points, end_points=end_points, cardinal=10, diagonal=14)
     # Simplify path to reduce waypoints
     cardinal_path, diagonaldown_path = simplify_path(path)
-    
-    # Display pathfinding results
-    # display_simple_grid = grid.astype(int)
-    # display_simple_grid[tuple(np.array(path).T)] = 1
-    # display_simple_grid[tuple(np.array(diagonaldown_path).T)] = 0.5
-    # display_simple_grid[tuple(np.array(start_points).T)] = 0.75
-    # display_simple_grid[tuple(np.array(end_points).T)] = 0.75
-    # print('simplified instructions:')
-    # print(display_simple_grid)
-    # plt.imshow(grid, cmap="gray")
-    # plt.colorbar()
-    # plt.show()
 
     # Display the original frame in a window
     cv2.imshow('frame-image',frame)
-    
+    cv2.line(frame, start_points[0], end_points[0], (255, 0, 0), 2)
+
     # Stop the performance counter
     end = time.perf_counter()
 
