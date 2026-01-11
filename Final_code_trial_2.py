@@ -67,24 +67,25 @@ def get_center(center_3d, rvecs, tvecs, CM, dist_coef, frame, grid_width, grid_h
     x, y = center_grid
     
     return x, y
-def grid_obstacle(ids, target, x, y, x_coords, y_coords, grid, radius, center_3d, rvecs, tvecs, CM, dist_coef, frame, grid_width, grid_height):
+def grid_obstacle(ids, target_id, x_coords, y_coords, grid, radius, center_3d, rvecs, tvecs, CM, dist_coef, frame, grid_width, grid_height):
     '''
     generate obstacles on grid function
 
-    input: detected ArUco ids, target id, x and y coordinates of center of ArUco code on grid, x and y coordinate arrays of grid, current grid, obstacle radius
-    output: updated grid with obstacles marked
+    input: detected ArUco ids, target id to ignore, x/y coordinate arrays of grid, current grid, obstacle radius
+    output: updated grid with obstacles marked for all non-target markers
     '''
-    for i in range (len(ids)):
-        if i != target:
-            center_2d, _ = cv2.projectPoints(center_3d, rvecs, tvecs, CM, dist_coef)
+    for i in range(len(ids)):
+        marker_id = int(ids[i][0])
+        if marker_id != int(target_id):
+            center_2d, _ = cv2.projectPoints(center_3d, rvecs[i], tvecs[i], CM, dist_coef)
             center_pixel = center_2d[0][0].astype(int)
             img_h, img_w = frame.shape[:2]
             grid_x = int(center_pixel[0] / img_w * grid_width)
             grid_y = int(center_pixel[1] / img_h * grid_height)
             center_grid = np.clip([grid_x, grid_y], 0, [grid_width - 1, grid_height - 1]).astype(int)
-            x, y = center_grid
+            ox, oy = center_grid
 
-            mask = (x_coords - x)**2 + (y_coords - y)**2 <= radius**2
+            mask = (x_coords - ox)**2 + (y_coords - oy)**2 <= radius**2
             grid[mask] = 0
     return grid
 def rotate_dict(d, k=2):
@@ -95,7 +96,6 @@ def rotate_dict(d, k=2):
 
 ''' Import necessary libraries '''
 # This is the vision library OpenCV
-from tokenize import _Position
 import cv2
 # This is a library for mathematical functions for python (used later)
 import numpy as np
@@ -112,7 +112,10 @@ import numpy as np
 '''Initiate camera parameters'''
 # 1. Load the camera calibration file
 script_dir = os.path.dirname(os.path.abspath(__file__))
-Camera = np.load(os.path.join(script_dir, 'Calibration.npz'))
+calib_path = os.path.join(script_dir, 'Calibration.npz')
+if not os.path.exists(calib_path):
+    raise FileNotFoundError(f"Calibration file not found at: {calib_path}")
+Camera = np.load(calib_path)
 # Get the camera matrix
 CM = Camera['CM']
 # Get the distortion coefficients
@@ -190,8 +193,9 @@ while True:
             target_dict = {}
 
             for t in range(len(ids)):
+                # Update grid with obstacles for all non-target markers
+                grid = grid_obstacle(ids, ids[t][0], x_coords, y_coords, grid, radius, center_3d, rvecs, tvecs, CM, dist_coef, frame, grid_width, grid_height)
                 # Get center of target ArUco code on grid
-                grid = grid_obstacle(ids, ids[t][0], x, y, x_coords, y_coords, grid, radius, center_3d, rvecs, tvecs, CM, dist_coef, frame, grid_width, grid_height)
                 start_point = get_center(center_3d, rvecs[t], tvecs[t], CM, dist_coef, frame, grid_width, grid_height)
                 print("Start Point for ID ", ids[t][0], ": ", start_point)
 
@@ -200,8 +204,15 @@ while True:
                     id_buffer[ids[t][0]] = start_point
 
                 # Get path from target to end point and ball to target
-                path_t2e = tcod.path.path2d(cost=grid, start_points=start_point, end_points=end_points.get(ids[t][0]), cardinal=10, diagonal=14)
-                path_b2t = tcod.path.path2d(cost=grid, start_points=(get_center(center_3d, rvecs[np.where(ids==ball_id)[0][0]], tvecs[np.where(ids==ball_id)[0][0]], CM, dist_coef, frame, grid_width, grid_height)), end_points=start_point, cardinal=10, diagonal=14)
+                # tcod.path.path2d expects sequences of (i,j) pairs
+                sp = (int(start_point[1]), int(start_point[0])) # Note the (y,x) order for (i,j)
+                ep = (int(end_points.get(ids[t][0])[1]), int(end_points.get(ids[t][0])[0]))
+                path_t2e = tcod.path.path2d(cost=grid, start_points=[sp], end_points=[ep], cardinal=10, diagonal=14)
+                ball_idx = np.where(ids == ball_id)[0]
+                if ball_idx.size > 0:
+                    ball_center = get_center(center_3d, rvecs[ball_idx[0]], tvecs[ball_idx[0]], CM, dist_coef, frame, grid_width, grid_height)
+                    bs = (int(ball_center[1]), int(ball_center[0]))
+                    path_b2t = tcod.path.path2d(cost=grid, start_points=[bs], end_points=[sp], cardinal=10, diagonal=14)
                 total_path = np.concatenate((path_b2t, path_t2e))
                 # append total path to target_dict 
                 target_dict[ids[t][0]] = len(total_path)
@@ -209,35 +220,42 @@ while True:
             sorted_targets = sorted(target_dict.items(), key=lambda item: item[1])
             print("Sorted Targets based on path length: ", sorted_targets)
             
-            for keys in sorted_targets:
-                _Position[keys] = False
-                while _Position[keys] == False:
+            position_status = {}
+            for keys, _len in sorted_targets:
+                position_status[keys] = False
+                while position_status[keys] == False:
                     ret, frame = cap.read()
                     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                     corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
                     cv2.imshow('frame-image', frame)
-                    if ids is not None and keys in ids.flatten() and len(ids) > 0:
+                    if ids is not None and len(ids) > 0 and keys in ids.flatten():
                         out = aruco.drawDetectedMarkers(frame, corners, ids)
                         rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, marker_size, CM, dist_coef)
                         if end_points.get(keys) == get_center(center_3d, rvecs[np.where(ids==keys)[0][0]], tvecs[np.where(ids==keys)[0][0]], CM, dist_coef, frame, grid_width, grid_height):
-                            _Position[keys] = True
+                            position_status[keys] = True
 
                         # compare current position with buffered position
                         for i in range(len(ids)):
-                            if id[i][0] != keys:
-                                position_pt = get_center(center_3d, rvecs[i], tvecs[i], CM, dist_coef, frame, grid_width, grid_height)
-                                if np.where(np.all(id_buffer == position_pt, axis=1))[0] == False:
-                                    grid = grid_obstacle(ids, keys, position_pt[0], position_pt[1], x_coords, y_coords, grid, radius, center_3d, rvecs, tvecs, CM, dist_coef, frame, grid_width, grid_height)
+                            if ids[i][0] != keys:
+                                # Recompute obstacles for current positions of non-target markers
+                                grid = grid_obstacle(ids, keys, x_coords, y_coords, grid, radius, center_3d, rvecs, tvecs, CM, dist_coef, frame, grid_width, grid_height)
                         
                         # ball to target
-                        ball_start = get_center(center_3d, rvecs[np.where(ids==ball_id)[0][0]], tvecs[np.where(ids==ball_id)[0][0]], CM, dist_coef, frame, grid_width, grid_height)
-                        target_start = get_center(center_3d, rvecs[np.where(ids==keys)[0][0]], tvecs[np.where(ids==keys)[0][0]], CM, dist_coef, frame, grid_width, grid_height)
-                        if abs(ball_start[0] - target_start[0]) > 2 and abs(ball_start[1] - target_start[1]) > 2:
-                            path_b2t = tcod.path.path2d(cost=grid, start_points=ball_start, end_points=target_start, cardinal=10, diagonal=14)
-                            print("path_b2t:", path_b2t)
-                        elif abs(ball_start[0] - target_start[0]) <= 2 and abs(ball_start[1] - target_start[1]) <= 2:
-                            path_t2e = tcod.path.path2d(cost=grid, start_points=target_start, end_points=end_points.get(keys), cardinal=10, diagonal=14)
-                            print("path_t2e:", path_t2e)
+                        ball_idx = np.where(ids == ball_id)[0]
+                        key_idx = np.where(ids == keys)[0]
+                        if ball_idx.size > 0 and key_idx.size > 0:
+                            ball_start = get_center(center_3d, rvecs[ball_idx[0]], tvecs[ball_idx[0]], CM, dist_coef, frame, grid_width, grid_height)
+                            target_start = get_center(center_3d, rvecs[key_idx[0]], tvecs[key_idx[0]], CM, dist_coef, frame, grid_width, grid_height)
+                            if abs(ball_start[0] - target_start[0]) > 2 and abs(ball_start[1] - target_start[1]) > 2:
+                                bs = (int(ball_start[1]), int(ball_start[0]))
+                                ts = (int(target_start[1]), int(target_start[0]))
+                                path_b2t = tcod.path.path2d(cost=grid, start_points=[bs], end_points=[ts], cardinal=10, diagonal=14)
+                                print("path_b2t:", path_b2t)
+                            else:
+                                ts = (int(target_start[1]), int(target_start[0]))
+                                ep = (int(end_points.get(keys)[1]), int(end_points.get(keys)[0]))
+                                path_t2e = tcod.path.path2d(cost=grid, start_points=[ts], end_points=[ep], cardinal=10, diagonal=14)
+                                print("path_t2e:", path_t2e)
 
                         cv2.waitKey(1)
                         if cv2.waitKey(20) & 0xFF == ord('q'):
