@@ -50,6 +50,7 @@ def simplify_path(path):
     ## deals with rising diagonal segments
 
     return cardinal_path, diagonaldown_path
+
 # This is the vision library OpenCV
 import cv2
 # This is a library for mathematical functions for python (used later)
@@ -62,6 +63,7 @@ import cv2.aruco as aruco
 import matplotlib.pyplot as plt
 # This is a library for roguelike game development (used for pathfinding)
 import tcod
+import os
 
 # # to be changed later with camera input 
 # start_points=[(0,0)]
@@ -76,7 +78,11 @@ Initiate camera and set parameters
 5. Create grid for pathfinding and set parameters
 '''
 # 1. Load the camera calibration file
-Camera= np.load('Calibration.npz')
+script_dir = os.path.dirname(os.path.abspath(__file__))
+calib_path = os.path.join(script_dir, 'Calibration.npz')
+if not os.path.exists(calib_path):
+    raise FileNotFoundError(f"Calibration file not found at: {calib_path}")
+Camera = np.load(calib_path)
 # Get the camera matrix
 CM = Camera['CM']
 # Get the distortion coefficients
@@ -95,6 +101,8 @@ parameters = aruco.DetectorParameters()
 cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+if not cap.isOpened():
+    raise RuntimeError("Camera not opened. Check webcam connection and permissions.")
 
 # 4. Create window for camera feed
 #Create window
@@ -142,8 +150,8 @@ while(True):
 
     # If markers are detected, draw them, estimate pose and overlay axes
     if ids is not None and len(ids) > 0:
+        # Draw detected markers on the frame
         out = aruco.drawDetectedMarkers(frame, corners, ids)
-
         # Calculate the pose of each detected marker
         rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, marker_size, CM, dist_coef)
 
