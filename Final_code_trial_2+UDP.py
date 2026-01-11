@@ -109,6 +109,11 @@ import matplotlib.pyplot as plt
 import tcod
 import os
 import numpy as np
+import socket   #communicate over the network
+import struct
+
+from Ball_Testing_Code_UDP import compute_theta_send   #convert data to binary format
+
 '''Initiate camera parameters'''
 # 1. Load the camera calibration file
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -156,13 +161,21 @@ radius = 1
 # Set target end points for pathfinding (can be changed later)
 end_points = {1:[10,39], 2:[11,39], 3:[12,39], 4:[13,39]}
 # Set ball ArUco id
-ball_id = 5
+ball_id = 8
 # Create id_buffer dictionary
 id_buffer = {}
 
 '''Temperary variables'''
 IsFire = False
 quit_flag = False
+
+''' Setup UDP communication '''
+# This is the IP address of the machine that the data will be send to
+UDP_IP = "138.38.229.206" #clearpass IP address for RPI 3B Model +
+# This is the RENOTE port the machine will reply on (on that machine this is the value for the LOCAL port)
+UDP_PORT = 50001
+sock = socket.socket(socket.AF_INET,    # Family of addresses, in this case IP type 
+                     socket.SOCK_DGRAM) # What protocol to use, in this case UDP (datagram)
 
 ''' Main loop '''
 while True:
@@ -207,7 +220,7 @@ while True:
                 grid = grid_obstacle(ids, marker_id, x_coords, y_coords, grid, radius, center_3d, rvecs, tvecs, CM, dist_coef, frame, grid_width, grid_height)
                 # Get center of target ArUco code on grid
                 start_point = get_center(center_3d, rvecs[t], tvecs[t], CM, dist_coef, frame, grid_width, grid_height)
-                print("Start Point for ID ", marker_id, ": ", start_point)
+                print("1. Start Point for ID ", marker_id, ": ", start_point)
 
                 # append start points and id[t] to id_buffer
                 if marker_id not in id_buffer:
@@ -232,7 +245,7 @@ while True:
                     target_dict[marker_id] = len(total_path)
             # Sort target_dict based on path length
             sorted_targets = sorted(target_dict.items(), key=lambda item: item[1])
-            print("Sorted Targets based on path length: ", sorted_targets) 
+            print("2. Sorted Targets based on path length: ", sorted_targets) 
 
             for keys, _len in sorted_targets:
                 position_status = False
@@ -244,6 +257,8 @@ while True:
                     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                     corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
                     
+                    grid.fill(1)
+
                     # Check for 'q' key press
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         quit_flag = True
@@ -251,17 +266,17 @@ while True:
                     if ids is not None and len(ids) > 0 and keys in ids.flatten() and ball_id in ids.flatten():
                         out = aruco.drawDetectedMarkers(frame, corners, ids)
                         rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, marker_size, CM, dist_coef)
-                        cv2.imshow('frame-image', frame)
+                        # cv2.imshow('frame-image', frame)
                         if end_points.get(keys) == get_center(center_3d, rvecs[np.where(ids==keys)[0][0]], tvecs[np.where(ids==keys)[0][0]], CM, dist_coef, frame, grid_width, grid_height):
                             position_status = True
-                            print ("Target ID ", keys, " reached endpoint. switching to next target.")
+                            print ("3. Target ID ", keys, " reached endpoint. switching to next target.")
 
                         # compare current position with buffered position
                         for i in range(len(ids)):
                             if ids[i][0] != keys:
                                 # Recompute obstacles for current positions of non-target markers
                                 grid = grid_obstacle(ids, keys, x_coords, y_coords, grid, radius, center_3d, rvecs, tvecs, CM, dist_coef, frame, grid_width, grid_height)
-                                print ("Updated grid with obstacles for non-target markers.")
+                                print ("4. Updated grid with obstacles for non-target markers.")
 
                         # ball to target
                         ball_idx = np.where(ids == ball_id)[0]
@@ -273,8 +288,27 @@ while True:
                                 bs = (int(ball_start[1]), int(ball_start[0]))
                                 ts = (int(target_start[1]), int(target_start[0]))
                                 path_b2t = tcod.path.path2d(cost=grid, start_points=[bs], end_points=[ts], cardinal=10, diagonal=14)
-                                _, diagonaldown_path_b2t = simplify_path(path_b2t)
-                                print('target id', keys, "path_b2t:", diagonaldown_path_b2t)
+                                # tcod can return an empty array; guard simplify_path
+                                if len(path_b2t) > 0:
+                                    _, diagonaldown_path_b2t = simplify_path(path_b2t)
+                                else:
+                                    diagonaldown_path_b2t = []
+                                print('5. target id', keys, "path_b2t:", diagonaldown_path_b2t)
+
+                                # convert to dx, dy instructions for UDP sending
+                                dy = ball_start[0]-diagonaldown_path_b2t[1][0]
+                                dx = ball_start[1]-diagonaldown_path_b2t[1][1]
+                                print ('6. dx, dy:', dx, dy, ball_start, diagonaldown_path_b2t[1])
+
+                                rotate_vec = rvecs[ball_idx[0]][0]
+                                R, _ = cv2.Rodrigues(rvecs[ball_idx[0]][0])
+                                yaw = np.arctan2(R[1, 0], R[0, 0])
+                                print ('7. rotate_vec:', yaw)
+                                # UDP sending
+                                next_target = np.array([dy, dx,compute_theta_send(yaw)])  #example data to send (y,x (i,j)) coordinates of next target point
+                                #sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
+                                print ("8. message:", next_target)
+
 
                                 # Visualize path on frame
                                 # Use float so fractional values (0.5, 0.75) are preserved
@@ -307,14 +341,32 @@ while True:
 
                                 h, w = plot.shape[:2]
                                 frame[0:h, 0:w] = plot
-                                cv2.imshow('frame-image', frame)
 
+                                cv2.imshow('frame-image', frame)
                             else:
                                 ts = (int(target_start[1]), int(target_start[0]))
                                 ep = (int(end_points.get(keys)[0]), int(end_points.get(keys)[1]))
                                 path_t2e = tcod.path.path2d(cost=grid, start_points=[ts], end_points=[ep], cardinal=10, diagonal=14)
-                                _, diagonaldown_path_t2e = simplify_path(path_t2e)
-                                print('target id', keys, "path_t2e:", diagonaldown_path_t2e)
+                                if len(path_t2e) > 0:
+                                    _, diagonaldown_path_t2e = simplify_path(path_t2e)
+                                else:
+                                    diagonaldown_path_t2e = []
+                                print('9. target id', keys, "path_t2e:", diagonaldown_path_t2e)
+
+                                # convert to dx, dy instructions for UDP sending
+                                dy = target_start[0]-diagonaldown_path_t2e[1][0]
+                                dx = target_start[1]-diagonaldown_path_t2e[1][1]
+                                print ('10. dx, dy:', dx, dy, target_start, diagonaldown_path_t2e[1])
+
+                                rotate_vec = rvecs[ball_idx[0]][0]
+                                R, _ = cv2.Rodrigues(rvecs[ball_idx[0]][0])
+                                yaw = np.arctan2(R[1, 0], R[0, 0])
+                                print ('11. rotate_vec:', yaw)
+
+                                # UDP sending
+                                next_target = np.array([dy, dx, compute_theta_send(yaw)])  #example data to send (y,x (i,j)) coordinates of next target point
+                                #sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
+                                print ("12. message:", next_target)
 
                                 # Use float so fractional values (0.5, 0.75) are preserved
                                 display_simple_grid = grid.astype(float)
@@ -346,19 +398,21 @@ while True:
 
                                 h, w = plot.shape[:2]
                                 frame[0:h, 0:w] = plot
-                                print('target id', keys, "path_t2e:", path_t2e)
-
                                 cv2.imshow('frame-image', frame)
+                                print('13. target id', keys, "path_t2e:", path_t2e)
                     else:
-                        print("Ball or target not detected.")
+                        print("14. Ball or target not detected.")
                         break
+                
+                # Display the frame once after all processing
+                #cv2.imshow('frame-image', frame)
                 
                 if quit_flag:
                     break
 
             # Crop rotation
             end_points = rotate_dict(end_points, k=2)
-            print("Rotated end points: ", end_points)
+            print("15. Rotated end points: ", end_points)
     
     if quit_flag:
         break
