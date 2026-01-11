@@ -9,7 +9,7 @@ UDP_IP = "138.38.229.206" #clearpass IP address for RPI 3B Model +
 # This is the RENOTE port the machine will reply on (on that machine this is the value for the LOCAL port)
 UDP_PORT = 50001
 # This is the message. In this case it is a string 
-next_target = np.array([2,3,1.4])  #example data to send (x,y) coordinates of next target point
+next_target = np.array([2,3,1.4])  #example data to send (y,x (i,j)) coordinates of next target point
 
 # Print the values for confirmation
 print ("UDP target IP:", UDP_IP)
