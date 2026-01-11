@@ -93,6 +93,12 @@ def rotate_dict(d, k=2):
     k = k % len(items)   # safety for large shifts
     rotated = items[-k:] + items[:-k]
     return dict(rotated)
+def compute_theta_send(theta):
+    if abs(theta) > np.pi / 2:
+        theta_send = np.sign(theta) * (np.pi - abs(theta))
+    else:
+        theta_send = -theta
+    return theta_send
 
 ''' Import necessary libraries '''
 # This is the vision library OpenCV
@@ -112,7 +118,6 @@ import numpy as np
 import socket   #communicate over the network
 import struct
 
-from Ball_Testing_Code_UDP import compute_theta_send   #convert data to binary format
 
 '''Initiate camera parameters'''
 # 1. Load the camera calibration file
@@ -213,9 +218,7 @@ while True:
 
             for t in range(len(ids)):
                 marker_id = int(ids[t][0])
-                # Skip markers without defined endpoints (e.g., ball marker)
-                if marker_id not in end_points:
-                    continue
+
                 # Update grid with obstacles for all non-target markers
                 grid = grid_obstacle(ids, marker_id, x_coords, y_coords, grid, radius, center_3d, rvecs, tvecs, CM, dist_coef, frame, grid_width, grid_height)
                 # Get center of target ArUco code on grid
@@ -251,6 +254,10 @@ while True:
                 position_status = False
                 while position_status == False and not quit_flag:
                     ret, frame = cap.read()
+                    
+                    # Skip frame if capture failed
+                    if not ret or frame is None:
+                        continue
 
                     ## check IsFire status here##
 
@@ -306,7 +313,7 @@ while True:
                                 print ('7. rotate_vec:', yaw)
                                 # UDP sending
                                 next_target = np.array([dy, dx,compute_theta_send(yaw)])  #example data to send (y,x (i,j)) coordinates of next target point
-                                #sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
+                                sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
                                 print ("8. message:", next_target)
 
 
@@ -365,7 +372,7 @@ while True:
 
                                 # UDP sending
                                 next_target = np.array([dy, dx, compute_theta_send(yaw)])  #example data to send (y,x (i,j)) coordinates of next target point
-                                #sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
+                                sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
                                 print ("12. message:", next_target)
 
                                 # Use float so fractional values (0.5, 0.75) are preserved
