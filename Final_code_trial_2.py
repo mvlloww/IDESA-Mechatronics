@@ -273,12 +273,82 @@ while True:
                                 bs = (int(ball_start[1]), int(ball_start[0]))
                                 ts = (int(target_start[1]), int(target_start[0]))
                                 path_b2t = tcod.path.path2d(cost=grid, start_points=[bs], end_points=[ts], cardinal=10, diagonal=14)
-                                print('target id', keys, "path_b2t:", path_b2t)
+                                _, diagonaldown_path_b2t = simplify_path(path_b2t)
+                                print('target id', keys, "path_b2t:", diagonaldown_path_b2t)
+
+                                # Visualize path on frame
+                                # Use float so fractional values (0.5, 0.75) are preserved
+                                display_simple_grid = grid.astype(float)
+                                # Safe assignments: only assign if the path arrays are non-empty and within bounds
+                                if len(path_b2t) > 0:
+                                    idx = tuple(np.array(path_b2t).T)
+                                    display_simple_grid[idx] = 0.25
+                                if len(diagonaldown_path_b2t) > 0:
+                                    idx = tuple(np.array(diagonaldown_path_b2t).T)
+                                    display_simple_grid[idx] = 0.5
+                                # Highlight current ball and target cells
+                                display_simple_grid[bs] = 1
+                                display_simple_grid[ts] = 0.75
+                                
+                                fig, ax = plt.subplots(figsize=(4, 4), dpi=100)
+                                ax.imshow(display_simple_grid, cmap="gray", vmin=0, vmax=1)
+                                ax.set_title("Grid & Path")
+                                ax.axis("off")
+
+                                # Render the Matplotlib figure
+                                fig.canvas.draw()
+                                # Get RGBA buffer from the figure
+                                buf = fig.canvas.buffer_rgba()
+                                # Convert buffer to NumPy array
+                                plot = np.asarray(buf)
+                                # Convert RGBA/RGB → BGR for OpenCV
+                                plot = cv2.cvtColor(plot, cv2.COLOR_RGB2BGR)
+                                plt.close(fig)  # IMPORTANT: prevent memory leak
+
+                                h, w = plot.shape[:2]
+                                frame[0:h, 0:w] = plot
+                                cv2.imshow('frame-image', frame)
+
                             else:
                                 ts = (int(target_start[1]), int(target_start[0]))
                                 ep = (int(end_points.get(keys)[0]), int(end_points.get(keys)[1]))
                                 path_t2e = tcod.path.path2d(cost=grid, start_points=[ts], end_points=[ep], cardinal=10, diagonal=14)
+                                _, diagonaldown_path_t2e = simplify_path(path_t2e)
+                                print('target id', keys, "path_t2e:", diagonaldown_path_t2e)
+
+                                # Use float so fractional values (0.5, 0.75) are preserved
+                                display_simple_grid = grid.astype(float)
+                                # Safe assignments: only assign if the path arrays are non-empty and within bounds
+                                if len(path_t2e) > 0:
+                                    idx = tuple(np.array(path_t2e).T)
+                                    display_simple_grid[idx] = 0.25
+                                if len(diagonaldown_path_t2e) > 0:
+                                    idx = tuple(np.array(diagonaldown_path_t2e).T)
+                                    display_simple_grid[idx] = 0.5
+                                # Highlight current target position and endpoint
+                                display_simple_grid[ts] = 1
+                                display_simple_grid[ep] = 0.75
+                                
+                                fig, ax = plt.subplots(figsize=(4, 4), dpi=100)
+                                ax.imshow(display_simple_grid, cmap="gray", vmin=0, vmax=1)
+                                ax.set_title("Grid & Path")
+                                ax.axis("off")
+
+                                # Render the Matplotlib figure
+                                fig.canvas.draw()
+                                # Get RGBA buffer from the figure
+                                buf = fig.canvas.buffer_rgba()
+                                # Convert buffer to NumPy array
+                                plot = np.asarray(buf)
+                                # Convert RGBA/RGB → BGR for OpenCV
+                                plot = cv2.cvtColor(plot, cv2.COLOR_RGB2BGR)
+                                plt.close(fig)  # IMPORTANT: prevent memory leak
+
+                                h, w = plot.shape[:2]
+                                frame[0:h, 0:w] = plot
                                 print('target id', keys, "path_t2e:", path_t2e)
+
+                                cv2.imshow('frame-image', frame)
                     else:
                         print("Ball or target not detected.")
                         break
