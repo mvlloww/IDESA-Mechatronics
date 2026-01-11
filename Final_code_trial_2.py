@@ -1,0 +1,265 @@
+def simplify_path(path):
+
+    '''
+    simplify_path function 
+
+    :input: array of (i,j) grid coordinates from A* pathfinding algorithm
+    :param path: delete any repeating outputs between two point on the grid. So the ball movement will be continuous instead of stopping every second.
+    :return: cardinal_path (array: only changed horizontal and vertical), diagonaldown_path (array: horizontal, vertical and diagonal changes made) 
+    '''
+    cardinal_path = [path[0]]
+    i = 1 #start with second waypoint
+
+    ## deals with straight segments
+    while i < len(path) - 1:
+        n_i = abs(path[i+1][0] - path[i-1][0]) #compares next and previous waypoints i
+        n_j = abs(path[i+1][1] - path[i-1][1]) #compares next and previous waypoints j
+        n_ij = n_i*n_j #if there is a change, n_ij is non-zero
+
+        if n_ij == 0 and (path[i][0] == path[i-1][0] or path[i][1] == path[i-1][1]):
+            pass #skip waypoint
+        else:
+            cardinal_path.append(path[i])
+        i += 1
+    cardinal_path.append(path[-1])
+    cardinal_path = np.array(cardinal_path) #convert to numpy array
+
+    ## deals with falling diagonal segments
+    diagonaldown_path = [cardinal_path[0]]
+    i = 1
+    while i < len(cardinal_path) - 1:
+        c_current = cardinal_path[i]
+        c_prev = cardinal_path[i-1]
+        c_next = cardinal_path[i+1]
+        c_change_i_prev = c_current[0] - c_prev[0]
+        c_change_j_prev = c_current[1] - c_prev[1]
+        c_change_i_next = c_current[0] - c_next[0]
+        c_change_j_next = c_current[1] - c_next[1]
+
+        n_i = c_change_i_prev + c_change_i_next
+        n_j = c_change_j_prev + c_change_j_next
+
+        if n_i == 0 and n_j == 0:
+            pass #skip waypoint
+        else:
+            diagonaldown_path.append(cardinal_path[i])
+        i += 1
+    diagonaldown_path.append(cardinal_path[-1])
+
+    diagonaldown_path = np.array(diagonaldown_path)
+    
+    ## deals with rising diagonal segments
+
+    return cardinal_path, diagonaldown_path
+def get_center(center_3d, rvecs, tvecs, CM, dist_coef, frame, grid_width, grid_height):
+    '''
+    get center of ArUco code function
+
+    input: 3D center coordinates of ArUco code, rotation and translation vectors, camera matrix, distortion coefficients, current frame, grid width and height
+    output: x and y coordinates on grid of the center of the ArUco code
+    '''
+    center_2d, _ = cv2.projectPoints(center_3d, rvecs, tvecs, CM, dist_coef)
+    center_pixel = center_2d[0][0].astype(int)
+    img_h, img_w = frame.shape[:2]
+    grid_x = int(center_pixel[0] / img_w * grid_width)
+    grid_y = int(center_pixel[1] / img_h * grid_height)
+    center_grid = np.clip([grid_x, grid_y], 0, [grid_width - 1, grid_height - 1]).astype(int)
+    x, y = center_grid
+    
+    return x, y
+def grid_obstacle(ids, target, x, y, x_coords, y_coords, grid, radius, center_3d, rvecs, tvecs, CM, dist_coef, frame, grid_width, grid_height):
+    '''
+    generate obstacles on grid function
+
+    input: detected ArUco ids, target id, x and y coordinates of center of ArUco code on grid, x and y coordinate arrays of grid, current grid, obstacle radius
+    output: updated grid with obstacles marked
+    '''
+    for i in range (len(ids)):
+        if i != target:
+            center_2d, _ = cv2.projectPoints(center_3d, rvecs, tvecs, CM, dist_coef)
+            center_pixel = center_2d[0][0].astype(int)
+            img_h, img_w = frame.shape[:2]
+            grid_x = int(center_pixel[0] / img_w * grid_width)
+            grid_y = int(center_pixel[1] / img_h * grid_height)
+            center_grid = np.clip([grid_x, grid_y], 0, [grid_width - 1, grid_height - 1]).astype(int)
+            x, y = center_grid
+
+            mask = (x_coords - x)**2 + (y_coords - y)**2 <= radius**2
+            grid[mask] = 0
+    return grid
+def rotate_dict(d, k=2):
+    items = list(d.items())
+    k = k % len(items)   # safety for large shifts
+    rotated = items[-k:] + items[:-k]
+    return dict(rotated)
+
+''' Import necessary libraries '''
+# This is the vision library OpenCV
+from tokenize import _Position
+import cv2
+# This is a library for mathematical functions for python (used later)
+import numpy as np
+# This is a library to get access to time-related functionalities
+import time
+# This is the ArUco library for fiducial markers
+import cv2.aruco as aruco
+# This is a library for plotting and visualizing data
+import matplotlib.pyplot as plt
+# This is a library for roguelike game development (used for pathfinding)
+import tcod
+import os
+import numpy as np
+'''Initiate camera parameters'''
+# 1. Load the camera calibration file
+script_dir = os.path.dirname(os.path.abspath(__file__))
+Camera = np.load(os.path.join(script_dir, 'Calibration.npz'))
+# Get the camera matrix
+CM = Camera['CM']
+# Get the distortion coefficients
+dist_coef = Camera['dist_coef']
+
+# Define the size of the aruco marker in mm
+marker_size = 40
+# Define the aruco dictionary
+aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
+# Define the aruco detection parameters
+parameters = aruco.DetectorParameters()
+
+# CAP_DSHOW to make sure it uses DirectShow backend on Windows (more stable)
+cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
+#Create window
+cv2.namedWindow("frame-image", cv2.WINDOW_NORMAL)
+#Position the window at x=0,y=100 on the computer screen
+cv2.moveWindow("frame-image",0,100)
+
+'''Initiate grid for pathfinding'''
+# Create a 20x40 grid all initialized to 1
+grid = np.ones((20,40),np.int8)
+# Detect set height and width of grid
+grid_height, grid_width = grid.shape
+# Define the 3D coordinates of the center of the marker in its own coordinate system
+# Output marker center is at the corner of the marker so need this
+half = marker_size / 2
+center_3d = np.array([[half, half, 0]], dtype=np.float32)
+
+# Precompute grid coordinates for masking
+y_coords, x_coords = np.ogrid[:grid_height, :grid_width]
+# Define the radius around the center of obstacle (can calibrate)
+radius = 1
+
+# Set target end points for pathfinding (can be changed later)
+end_points = {1:[19,39], 2:[19,39], 3:[19,39], 4:[19,39]}
+# Set ball ArUco id
+ball_id = 5
+# Create id_buffer dictionary
+id_buffer = {}
+
+'''Temperary variables'''
+IsFire = False
+
+''' Main loop '''
+while True:
+    # Start the performance clock
+    start = time.perf_counter()
+
+    while IsFire == False:
+        # Capture current frame from the camera
+        ret, frame = cap.read()
+
+        ## check IsFire status here##
+
+        # Convert the image from the camera to Gray scale
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # Detect ArUco markers in the grey image
+        corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)  
+        cv2.imshow('frame-image', frame)
+
+        # If markers are detected, draw them, estimate pose and overlay axes
+        if ids is not None and len(ids) > 0:
+            # Draw detected markers on the frame
+            out = aruco.drawDetectedMarkers(frame, corners, ids)
+            # Calculate the pose of each detected marker
+            rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, marker_size, CM, dist_coef)
+
+            # Reset grid for pathfinding
+            grid.fill(1)
+            # Open dictionary for sorting targets 
+            target_dict = {}
+
+            for t in range(len(ids)):
+                # Get center of target ArUco code on grid
+                grid = grid_obstacle(ids, ids[t][0], x, y, x_coords, y_coords, grid, radius, center_3d, rvecs, tvecs, CM, dist_coef, frame, grid_width, grid_height)
+                start_point = get_center(center_3d, rvecs[t], tvecs[t], CM, dist_coef, frame, grid_width, grid_height)
+                print("Start Point for ID ", ids[t][0], ": ", start_point)
+
+                # append start points and id[t] to id_buffer
+                if ids[t][0] not in id_buffer:
+                    id_buffer[ids[t][0]] = start_point
+
+                # Get path from target to end point and ball to target
+                path_t2e = tcod.path.path2d(cost=grid, start_points=start_point, end_points=end_points.get(ids[t][0]), cardinal=10, diagonal=14)
+                path_b2t = tcod.path.path2d(cost=grid, start_points=(get_center(center_3d, rvecs[np.where(ids==ball_id)[0][0]], tvecs[np.where(ids==ball_id)[0][0]], CM, dist_coef, frame, grid_width, grid_height)), end_points=start_point, cardinal=10, diagonal=14)
+                total_path = np.concatenate((path_b2t, path_t2e))
+                # append total path to target_dict 
+                target_dict[ids[t][0]] = len(total_path)
+            # Sort target_dict based on path length
+            sorted_targets = sorted(target_dict.items(), key=lambda item: item[1])
+            print("Sorted Targets based on path length: ", sorted_targets)
+            
+            for keys in sorted_targets:
+                _Position[keys] = False
+                while _Position[keys] == False:
+                    ret, frame = cap.read()
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
+                    cv2.imshow('frame-image', frame)
+                    if ids is not None and keys in ids.flatten() and len(ids) > 0:
+                        out = aruco.drawDetectedMarkers(frame, corners, ids)
+                        rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, marker_size, CM, dist_coef)
+                        if end_points.get(keys) == get_center(center_3d, rvecs[np.where(ids==keys)[0][0]], tvecs[np.where(ids==keys)[0][0]], CM, dist_coef, frame, grid_width, grid_height):
+                            _Position[keys] = True
+
+                        # compare current position with buffered position
+                        for i in range(len(ids)):
+                            if id[i][0] != keys:
+                                position_pt = get_center(center_3d, rvecs[i], tvecs[i], CM, dist_coef, frame, grid_width, grid_height)
+                                if np.where(np.all(id_buffer == position_pt, axis=1))[0] == False:
+                                    grid = grid_obstacle(ids, keys, position_pt[0], position_pt[1], x_coords, y_coords, grid, radius, center_3d, rvecs, tvecs, CM, dist_coef, frame, grid_width, grid_height)
+                        
+                        # ball to target
+                        ball_start = get_center(center_3d, rvecs[np.where(ids==ball_id)[0][0]], tvecs[np.where(ids==ball_id)[0][0]], CM, dist_coef, frame, grid_width, grid_height)
+                        target_start = get_center(center_3d, rvecs[np.where(ids==keys)[0][0]], tvecs[np.where(ids==keys)[0][0]], CM, dist_coef, frame, grid_width, grid_height)
+                        if abs(ball_start[0] - target_start[0]) > 2 and abs(ball_start[1] - target_start[1]) > 2:
+                            path_b2t = tcod.path.path2d(cost=grid, start_points=ball_start, end_points=target_start, cardinal=10, diagonal=14)
+                            print("path_b2t:", path_b2t)
+                        elif abs(ball_start[0] - target_start[0]) <= 2 and abs(ball_start[1] - target_start[1]) <= 2:
+                            path_t2e = tcod.path.path2d(cost=grid, start_points=target_start, end_points=end_points.get(keys), cardinal=10, diagonal=14)
+                            print("path_t2e:", path_t2e)
+
+                        cv2.waitKey(1)
+                        if cv2.waitKey(20) & 0xFF == ord('q'):
+                            quit_flag = True
+                            break
+
+            # Crop rotation
+            end_points = rotate_dict(end_points, k=2)
+            print("Rotated end points: ", end_points)
+
+        cv2.waitKey(1)
+        if cv2.waitKey(20) & 0xFF == ord('q'):
+            quit_flag = True
+            break
+    cv2.waitKey(1)
+    if cv2.waitKey(20) & 0xFF == ord('q'):
+        quit_flag = True
+        break
+
+# When everything done, release the capture
+cap.release()
+# close all windows
+cv2.destroyAllWindows()
+# exit the kernel
+exit(0)
