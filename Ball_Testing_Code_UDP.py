@@ -50,6 +50,15 @@ def simplify_path(path):
     ## deals with rising diagonal segments
 
     return cardinal_path, diagonaldown_path
+
+
+def compute_theta_send(theta):
+    if abs(theta) > np.pi / 2:
+        theta_send = np.sign(theta) * (np.pi - abs(theta))
+    else:
+        theta_send = -theta
+    return theta_send
+
 # This is the vision library OpenCV
 import cv2
 # This is a library for mathematical functions for python (used later)
@@ -62,6 +71,8 @@ import cv2.aruco as aruco
 import matplotlib.pyplot as plt
 # This is a library for roguelike game development (used for pathfinding)
 import tcod
+import socket   #communicate over the network
+import struct   #convert data to binary format
 
 # # to be changed later with camera input 
 # start_points=[(0,0)]
@@ -122,6 +133,16 @@ end_points = {1:[19,39], 2:[19,39], 3:[19,39], 4:[19,39], 5:[19,39]}
 ball_id = 1
 start_points = [0,0]
 
+## UDP communication setup##
+# This is the IP address of the machine that the data will be send to
+UDP_IP = "138.38.229.206" #clearpass IP address for RPI 3B Model +
+# This is the RENOTE port the machine will reply on (on that machine this is the value for the LOCAL port)
+UDP_PORT = 50001
+sock = socket.socket(socket.AF_INET,    # Family of addresses, in this case IP type 
+                     socket.SOCK_DGRAM) # What protocol to use, in this case UDP (datagram)
+
+
+
 # Capture frame continuously
 while(True):
     # Start the performance clock
@@ -148,6 +169,7 @@ while(True):
         marker_positions = {}  # Store marker grid positions
         grid.fill(1)
         target_dict = {}
+        yaw = 0  # Initialize rotation vector
         
         for i in range(len(ids)):
             # Compute the center of the marker in pixel coordinates
@@ -162,6 +184,10 @@ while(True):
             if ids[i][0] == ball_id:
                 # x,y to i,j
                 start_points = (center_grid[1], center_grid[0])
+                rotate_vec = rvecs[i][0]
+                R, _ = cv2.Rodrigues(rvecs[i][0])
+                yaw = np.arctan2(R[1, 0], R[0, 0])
+                print ('rotate_vec:', yaw)
             else:
                 mask = (x_coords - x)**2 + (y_coords - y)**2 <= radius**2
                 grid[mask] = 0
@@ -175,8 +201,12 @@ while(True):
     # convert to dx, dy instructions for UDP sending
     dy = start_points[0]-diagonaldown_path[1][0]
     dx = start_points[1]-diagonaldown_path[1][1]
+    print ('dx, dy:', dx, dy)
 
-    ### UDP sending code here ###
+    # UDP sending
+    next_target = np.array([dy, dx, compute_theta_send(yaw)])  #example data to send (y,x (i,j)) coordinates of next target point
+    sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
+    print ("message:", next_target)
 
     # Use float so fractional values (0.5, 0.75) are preserved
     display_simple_grid = grid.astype(float)
