@@ -142,7 +142,6 @@ sock = socket.socket(socket.AF_INET,    # Family of addresses, in this case IP t
                      socket.SOCK_DGRAM) # What protocol to use, in this case UDP (datagram)
 
 
-
 # Capture frame continuously
 while(True):
     # Start the performance clock
@@ -169,7 +168,7 @@ while(True):
         marker_positions = {}  # Store marker grid positions
         grid.fill(1)
         target_dict = {}
-        yaw = 0  # Initialize rotation vector
+        yaw = 0.0  # Initialize rotation vector (default value)
         
         for i in range(len(ids)):
             # Compute the center of the marker in pixel coordinates
@@ -252,9 +251,9 @@ while(True):
     if cv2.waitKey(20) & 0xFF == ord('q'):
         # Exit the While loop
         break
-# When everything done, release the capture
-cap.release()
-# close all windows
-cv2.destroyAllWindows()
-# exit the kernel
-exit(0)
+    # When everything done, release the capture
+    cap.release()
+    # close all windows
+    cv2.destroyAllWindows()
+    # exit the kernel
+    exit(0)
