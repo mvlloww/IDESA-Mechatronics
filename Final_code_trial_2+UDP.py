@@ -178,7 +178,7 @@ quit_flag = False
 # This is the IP address of the machine that the data will be send to
 UDP_IP = "138.38.229.206" #clearpass IP address for RPI 3B Model +
 # This is the RENOTE port the machine will reply on (on that machine this is the value for the LOCAL port)
-UDP_PORT = 50001
+UDP_PORT = 50000
 sock = socket.socket(socket.AF_INET,    # Family of addresses, in this case IP type 
                      socket.SOCK_DGRAM) # What protocol to use, in this case UDP (datagram)
 
@@ -303,8 +303,8 @@ while True:
                                 print('5. target id', keys, "path_b2t:", diagonaldown_path_b2t)
 
                                 # convert to dx, dy instructions for UDP sending
-                                dy = ball_start[0]-diagonaldown_path_b2t[1][0]
-                                dx = ball_start[1]-diagonaldown_path_b2t[1][1]
+                                dy = ball_start[1]-diagonaldown_path_b2t[1][0]
+                                dx = ball_start[0]-diagonaldown_path_b2t[1][1]
                                 print ('6. dx, dy:', dx, dy, ball_start, diagonaldown_path_b2t[1])
 
                                 rotate_vec = rvecs[ball_idx[0]][0]
@@ -361,8 +361,8 @@ while True:
                                 print('9. target id', keys, "path_t2e:", diagonaldown_path_t2e)
 
                                 # convert to dx, dy instructions for UDP sending
-                                dy = target_start[0]-diagonaldown_path_t2e[1][0]
-                                dx = target_start[1]-diagonaldown_path_t2e[1][1]
+                                dy = target_start[1]-diagonaldown_path_t2e[1][0]
+                                dx = target_start[0]-diagonaldown_path_t2e[1][1]
                                 print ('10. dx, dy:', dx, dy, target_start, diagonaldown_path_t2e[1])
 
                                 rotate_vec = rvecs[ball_idx[0]][0]
