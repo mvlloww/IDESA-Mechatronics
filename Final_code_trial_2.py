@@ -254,13 +254,15 @@ while True:
                         cv2.imshow('frame-image', frame)
                         if end_points.get(keys) == get_center(center_3d, rvecs[np.where(ids==keys)[0][0]], tvecs[np.where(ids==keys)[0][0]], CM, dist_coef, frame, grid_width, grid_height):
                             position_status = True
+                            print ("Target ID ", keys, " reached endpoint. switching to next target.")
 
                         # compare current position with buffered position
                         for i in range(len(ids)):
                             if ids[i][0] != keys:
                                 # Recompute obstacles for current positions of non-target markers
                                 grid = grid_obstacle(ids, keys, x_coords, y_coords, grid, radius, center_3d, rvecs, tvecs, CM, dist_coef, frame, grid_width, grid_height)
-                        
+                                print ("Updated grid with obstacles for non-target markers.")
+
                         # ball to target
                         ball_idx = np.where(ids == ball_id)[0]
                         key_idx = np.where(ids == keys)[0]
