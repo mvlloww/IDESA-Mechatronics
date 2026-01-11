@@ -2,16 +2,6 @@ import numpy as np
 import tcod
 import socket   #communicate over the network
 import struct   #convert data to binary format
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-This is an example to send data as a UDP datagram.
-
-@author: ioannisgeorgilas
-"""
-
-# First we import our libraries
-
 
 # This is the IP address of the machine that the data will be send to
 UDP_IP = "138.38.229.206" #clearpass IP address for RPI 3B Model +
@@ -19,7 +9,7 @@ UDP_IP = "138.38.229.206" #clearpass IP address for RPI 3B Model +
 # This is the RENOTE port the machine will reply on (on that machine this is the value for the LOCAL port)
 UDP_PORT = 50001
 # This is the message. In this case it is a string 
-next_target = np.array([2,3], dtype=np.int32)  #example data to send (x,y) coordinates of next target point
+next_target = np.array([2,3,1.4])  #example data to send (x,y) coordinates of next target point
 
 # Print the values for confirmation
 print ("UDP target IP:", UDP_IP)
@@ -33,5 +23,5 @@ sock = socket.socket(socket.AF_INET,    # Family of addresses, in this case IP t
 
 # Send the message over the UDP socket. Not checking if it is done
 while True:
-    sock.sendto(struct.pack('<ii', int(next_target[0]), int(next_target[1])), (UDP_IP, UDP_PORT))
+    sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
     print ("message:", next_target)
