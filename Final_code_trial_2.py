@@ -156,7 +156,7 @@ radius = 1
 # Set target end points for pathfinding (can be changed later)
 end_points = {1:[10,39], 2:[11,39], 3:[12,39], 4:[13,39]}
 # Set ball ArUco id
-ball_id = 5
+ball_id = 8
 # Create id_buffer dictionary
 id_buffer = {}
 
@@ -244,6 +244,8 @@ while True:
                     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                     corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
                     
+                    grid.fill(1)
+
                     # Check for 'q' key press
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         quit_flag = True
@@ -273,7 +275,11 @@ while True:
                                 bs = (int(ball_start[1]), int(ball_start[0]))
                                 ts = (int(target_start[1]), int(target_start[0]))
                                 path_b2t = tcod.path.path2d(cost=grid, start_points=[bs], end_points=[ts], cardinal=10, diagonal=14)
-                                _, diagonaldown_path_b2t = simplify_path(path_b2t)
+                                # tcod can return an empty array; guard simplify_path
+                                if len(path_b2t) > 0:
+                                    _, diagonaldown_path_b2t = simplify_path(path_b2t)
+                                else:
+                                    diagonaldown_path_b2t = []
                                 print('target id', keys, "path_b2t:", diagonaldown_path_b2t)
 
                                 # Visualize path on frame
@@ -313,7 +319,10 @@ while True:
                                 ts = (int(target_start[1]), int(target_start[0]))
                                 ep = (int(end_points.get(keys)[0]), int(end_points.get(keys)[1]))
                                 path_t2e = tcod.path.path2d(cost=grid, start_points=[ts], end_points=[ep], cardinal=10, diagonal=14)
-                                _, diagonaldown_path_t2e = simplify_path(path_t2e)
+                                if len(path_t2e) > 0:
+                                    _, diagonaldown_path_t2e = simplify_path(path_t2e)
+                                else:
+                                    diagonaldown_path_t2e = []
                                 print('target id', keys, "path_t2e:", diagonaldown_path_t2e)
 
                                 # Use float so fractional values (0.5, 0.75) are preserved
