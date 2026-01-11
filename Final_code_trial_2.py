@@ -154,7 +154,7 @@ y_coords, x_coords = np.ogrid[:grid_height, :grid_width]
 radius = 1
 
 # Set target end points for pathfinding (can be changed later)
-end_points = {1:[19,39], 2:[19,39], 3:[19,39], 4:[19,39]}
+end_points = {1:[10,39], 2:[11,39], 3:[12,39], 4:[13,39]}
 # Set ball ArUco id
 ball_id = 5
 # Create id_buffer dictionary
@@ -162,13 +162,14 @@ id_buffer = {}
 
 '''Temperary variables'''
 IsFire = False
+quit_flag = False
 
 ''' Main loop '''
 while True:
     # Start the performance clock
     start = time.perf_counter()
 
-    while IsFire == False:
+    while IsFire == False and not quit_flag:
         # Capture current frame from the camera
         ret, frame = cap.read()
 
@@ -179,6 +180,11 @@ while True:
         # Detect ArUco markers in the grey image
         corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)  
         cv2.imshow('frame-image', frame)
+        
+        # Check for 'q' key press
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            quit_flag = True
+            break
 
         # If markers are detected, draw them, estimate pose and overlay axes
         if ids is not None and len(ids) > 0:
@@ -193,46 +199,61 @@ while True:
             target_dict = {}
 
             for t in range(len(ids)):
+                marker_id = int(ids[t][0])
+                # Skip markers without defined endpoints (e.g., ball marker)
+                if marker_id not in end_points:
+                    continue
                 # Update grid with obstacles for all non-target markers
-                grid = grid_obstacle(ids, ids[t][0], x_coords, y_coords, grid, radius, center_3d, rvecs, tvecs, CM, dist_coef, frame, grid_width, grid_height)
+                grid = grid_obstacle(ids, marker_id, x_coords, y_coords, grid, radius, center_3d, rvecs, tvecs, CM, dist_coef, frame, grid_width, grid_height)
                 # Get center of target ArUco code on grid
                 start_point = get_center(center_3d, rvecs[t], tvecs[t], CM, dist_coef, frame, grid_width, grid_height)
-                print("Start Point for ID ", ids[t][0], ": ", start_point)
+                print("Start Point for ID ", marker_id, ": ", start_point)
 
                 # append start points and id[t] to id_buffer
-                if ids[t][0] not in id_buffer:
-                    id_buffer[ids[t][0]] = start_point
+                if marker_id not in id_buffer:
+                    id_buffer[marker_id] = start_point
 
                 # Get path from target to end point and ball to target
                 # tcod.path.path2d expects sequences of (i,j) pairs
                 sp = (int(start_point[1]), int(start_point[0])) # Note the (y,x) order for (i,j)
-                ep = (int(end_points.get(ids[t][0])[1]), int(end_points.get(ids[t][0])[0]))
-                path_t2e = tcod.path.path2d(cost=grid, start_points=[sp], end_points=[ep], cardinal=10, diagonal=14)
-                ball_idx = np.where(ids == ball_id)[0]
-                if ball_idx.size > 0:
-                    ball_center = get_center(center_3d, rvecs[ball_idx[0]], tvecs[ball_idx[0]], CM, dist_coef, frame, grid_width, grid_height)
-                    bs = (int(ball_center[1]), int(ball_center[0]))
-                    path_b2t = tcod.path.path2d(cost=grid, start_points=[bs], end_points=[sp], cardinal=10, diagonal=14)
-                total_path = np.concatenate((path_b2t, path_t2e))
-                # append total path to target_dict 
-                target_dict[ids[t][0]] = len(total_path)
+                target_endpoint = end_points.get(marker_id)
+                if target_endpoint is not None:
+                    ep = (int(target_endpoint[0]), int(target_endpoint[1]))
+                    path_t2e = tcod.path.path2d(cost=grid, start_points=[sp], end_points=[ep], cardinal=10, diagonal=14)
+                    ball_idx = np.where(ids == ball_id)[0]
+                    if ball_idx.size > 0:
+                        ball_center = get_center(center_3d, rvecs[ball_idx[0]], tvecs[ball_idx[0]], CM, dist_coef, frame, grid_width, grid_height)
+                        bs = (int(ball_center[1]), int(ball_center[0]))
+                        path_b2t = tcod.path.path2d(cost=grid, start_points=[bs], end_points=[sp], cardinal=10, diagonal=14)
+                    else:
+                        path_b2t = []
+                    total_path = np.concatenate((path_b2t, path_t2e)) if len(path_b2t) > 0 else path_t2e
+                    # append total path to target_dict 
+                    target_dict[marker_id] = len(total_path)
             # Sort target_dict based on path length
             sorted_targets = sorted(target_dict.items(), key=lambda item: item[1])
-            print("Sorted Targets based on path length: ", sorted_targets)
-            
-            position_status = {}
+            print("Sorted Targets based on path length: ", sorted_targets) 
+
             for keys, _len in sorted_targets:
-                position_status[keys] = False
-                while position_status[keys] == False:
+                position_status = False
+                while position_status == False and not quit_flag:
                     ret, frame = cap.read()
+
+                    ## check IsFire status here##
+
                     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                     corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
-                    cv2.imshow('frame-image', frame)
-                    if ids is not None and len(ids) > 0 and keys in ids.flatten():
+                    
+                    # Check for 'q' key press
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        quit_flag = True
+                        break
+                    if ids is not None and len(ids) > 0 and keys in ids.flatten() and ball_id in ids.flatten():
                         out = aruco.drawDetectedMarkers(frame, corners, ids)
                         rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, marker_size, CM, dist_coef)
+                        cv2.imshow('frame-image', frame)
                         if end_points.get(keys) == get_center(center_3d, rvecs[np.where(ids==keys)[0][0]], tvecs[np.where(ids==keys)[0][0]], CM, dist_coef, frame, grid_width, grid_height):
-                            position_status[keys] = True
+                            position_status = True
 
                         # compare current position with buffered position
                         for i in range(len(ids)):
@@ -250,29 +271,24 @@ while True:
                                 bs = (int(ball_start[1]), int(ball_start[0]))
                                 ts = (int(target_start[1]), int(target_start[0]))
                                 path_b2t = tcod.path.path2d(cost=grid, start_points=[bs], end_points=[ts], cardinal=10, diagonal=14)
-                                print("path_b2t:", path_b2t)
+                                print('target id', keys, "path_b2t:", path_b2t)
                             else:
                                 ts = (int(target_start[1]), int(target_start[0]))
-                                ep = (int(end_points.get(keys)[1]), int(end_points.get(keys)[0]))
+                                ep = (int(end_points.get(keys)[0]), int(end_points.get(keys)[1]))
                                 path_t2e = tcod.path.path2d(cost=grid, start_points=[ts], end_points=[ep], cardinal=10, diagonal=14)
-                                print("path_t2e:", path_t2e)
-
-                        cv2.waitKey(1)
-                        if cv2.waitKey(20) & 0xFF == ord('q'):
-                            quit_flag = True
-                            break
+                                print('target id', keys, "path_t2e:", path_t2e)
+                    else:
+                        print("Ball or target not detected.")
+                        break
+                
+                if quit_flag:
+                    break
 
             # Crop rotation
             end_points = rotate_dict(end_points, k=2)
             print("Rotated end points: ", end_points)
-
-        cv2.waitKey(1)
-        if cv2.waitKey(20) & 0xFF == ord('q'):
-            quit_flag = True
-            break
-    cv2.waitKey(1)
-    if cv2.waitKey(20) & 0xFF == ord('q'):
-        quit_flag = True
+    
+    if quit_flag:
         break
 
 # When everything done, release the capture
@@ -280,4 +296,4 @@ cap.release()
 # close all windows
 cv2.destroyAllWindows()
 # exit the kernel
-exit(0)
+exit()
