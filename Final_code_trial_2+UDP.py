@@ -74,12 +74,13 @@ def grid_obstacle(ids, target_id, x_coords, y_coords, grid, radius, center_3d, r
     input: detected ArUco ids, target id to ignore, x/y coordinate arrays of grid, current grid, obstacle radius
     output: updated grid with obstacles marked for all non-target markers
     '''
+    img_h, img_w = frame.shape[:2]
+    
     for i in range(len(ids)):
         marker_id = int(ids[i][0])
-        if marker_id != int(target_id):
+        if marker_id != int(target_id) and marker_id != int(ball_id):
             center_2d, _ = cv2.projectPoints(center_3d, rvecs[i], tvecs[i], CM, dist_coef)
             center_pixel = center_2d[0][0].astype(int)
-            img_h, img_w = frame.shape[:2]
             grid_x = int(center_pixel[0] / img_w * grid_width)
             grid_y = int(center_pixel[1] / img_h * grid_height)
             center_grid = np.clip([grid_x, grid_y], 0, [grid_width - 1, grid_height - 1]).astype(int)
@@ -88,7 +89,11 @@ def grid_obstacle(ids, target_id, x_coords, y_coords, grid, radius, center_3d, r
             mask = (x_coords - ox)**2 + (y_coords - oy)**2 <= radius**2
             grid[mask] = 0
 
-            cv2.circle(frame, (ox,oy), radius, (0,0,255), -1)
+            # Draw circle on frame using pixel coordinates
+            ox_pixel = int(ox * img_w / grid_width)
+            oy_pixel = int(oy * img_h / grid_height)
+            radius_pixel = int(radius * img_w / grid_width)
+            cv2.circle(frame, (ox_pixel, oy_pixel), radius_pixel, (0,0,255), 2)
     return grid
 def rotate_dict(d, k=2):
     items = list(d.items())
@@ -163,7 +168,7 @@ center_3d = np.array([[half, half, 0]], dtype=np.float32)
 # Precompute grid coordinates for masking
 y_coords, x_coords = np.ogrid[:grid_height, :grid_width]
 # Define the radius around the center of obstacle (can calibrate)
-radius = 1
+radius = 1.5
 
 # Set target end points for pathfinding (can be changed later)
 end_points = {1:[10,39], 2:[11,39], 3:[12,39], 4:[13,39]}
@@ -312,7 +317,7 @@ while True:
                             path_t2e = tcod.path.path2d(cost=grid, start_points=[ts], end_points=[ep], cardinal=10, diagonal=14)
                             
 
-                            if abs(ball_start[0] - target_start[0]) > 2 and abs(ball_start[1] - target_start[1]) > 2:
+                            if abs(ball_start[0] - target_start[0]) > 1 and abs(ball_start[1] - target_start[1]) > 1:
                                 # Set target to obstacle
                                 mask = (x_coords - target_start[0])**2 + (y_coords - target_start[1])**2 <= radius**2
                                 grid[mask] = 0
@@ -334,24 +339,28 @@ while True:
                                     diagonaldown_path_b2t = []
                                 print('6. target id', keys, "path_b2t:", diagonaldown_path_b2t)
 
-                                # convert to dx, dy instructions for UDP sending
-                                dy = ball_start[1]-diagonaldown_path_b2t[1][0]
-                                dx = ball_start[0]-diagonaldown_path_b2t[1][1]
-                                print ('7. dx, dy:', dx, dy, ball_start, diagonaldown_path_b2t[1])
+                                # Check if path has at least 2 points before accessing [1]
+                                if len(diagonaldown_path_b2t) >= 2:
+                                    # convert to dx, dy instructions for UDP sending
+                                    dy = ball_start[1]-diagonaldown_path_b2t[1][0]
+                                    dx = ball_start[0]-diagonaldown_path_b2t[1][1]
+                                    print ('7. dx, dy:', dx, dy, ball_start, diagonaldown_path_b2t[1])
 
-                                # Recalculate ball_idx for current frame
-                                ball_idx = np.where(ids == ball_id)[0]
-                                if ball_idx.size > 0:
-                                    rotate_vec = rvecs[ball_idx[0]][0]
-                                    R, _ = cv2.Rodrigues(rvecs[ball_idx[0]][0])
-                                    yaw = np.arctan2(R[1, 0], R[0, 0])
-                                    print ('8. rotate_vec:', yaw)
-                                    # UDP sending
-                                    next_target = np.array([dy, dx,compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
-                                    sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
-                                    print ("9. message:", next_target)
+                                    # Recalculate ball_idx for current frame
+                                    ball_idx = np.where(ids == ball_id)[0]
+                                    if ball_idx.size > 0:
+                                        rotate_vec = rvecs[ball_idx[0]][0]
+                                        R, _ = cv2.Rodrigues(rvecs[ball_idx[0]][0])
+                                        yaw = np.arctan2(R[1, 0], R[0, 0])
+                                        print ('8. rotate_vec:', yaw)
+                                        # UDP sending
+                                        next_target = np.array([dy, dx,compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
+                                        sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
+                                        print ("9. message:", next_target)
+                                    else:
+                                        print("8. Ball not detected, skipping rotation calculation")
                                 else:
-                                    print("8. Ball not detected, skipping rotation calculation")
+                                    print("7. Path too short for ball-to-target movement")
 
 
                                 # Visualize path on frame
