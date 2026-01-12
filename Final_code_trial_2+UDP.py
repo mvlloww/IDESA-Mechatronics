@@ -87,6 +87,8 @@ def grid_obstacle(ids, target_id, x_coords, y_coords, grid, radius, center_3d, r
 
             mask = (x_coords - ox)**2 + (y_coords - oy)**2 <= radius**2
             grid[mask] = 0
+
+            cv2.circle(frame, (ox,oy), radius, (0,0,255), -1)
     return grid
 def rotate_dict(d, k=2):
     items = list(d.items())
@@ -354,36 +356,60 @@ while True:
 
                                 # Visualize path on frame
                                 # Use float so fractional values (0.5, 0.75) are preserved
-                                display_simple_grid = grid.astype(float)
+                                # display_simple_grid = grid.astype(float)
                                 # Safe assignments: only assign if the path arrays are non-empty and within bounds
-                                if len(path_b2t) > 0:
-                                    idx = tuple(np.array(path_b2t).T)
-                                    display_simple_grid[idx] = 0.25
-                                if len(diagonaldown_path_b2t) > 0:
-                                    idx = tuple(np.array(diagonaldown_path_b2t).T)
-                                    display_simple_grid[idx] = 0.5
-                                # Highlight current ball and target cells
-                                display_simple_grid[bs] = 1
-                                display_simple_grid[ts] = 0.75
+                                # if len(path_b2t) > 0:
+                                #     idx = tuple(np.array(path_b2t).T)
+                                #     display_simple_grid[idx] = 0.25
+                                # if len(diagonaldown_path_b2t) > 0:
+                                #     idx = tuple(np.array(diagonaldown_path_b2t).T)
+                                #     display_simple_grid[idx] = 0.5
+                                # # Highlight current ball and target cells
+                                # display_simple_grid[bs] = 1
+                                # display_simple_grid[ts] = 0.75
                                 
-                                fig, ax = plt.subplots(figsize=(4, 4), dpi=100)
-                                ax.imshow(display_simple_grid, cmap="gray", vmin=0, vmax=1)
-                                ax.set_title("Grid & Path")
-                                ax.axis("off")
+                                # fig, ax = plt.subplots(figsize=(4, 4), dpi=100)
+                                # ax.imshow(display_simple_grid, cmap="gray", vmin=0, vmax=1)
+                                # ax.set_title("Grid & Path")
+                                # ax.axis("off")
 
-                                # Render the Matplotlib figure
-                                fig.canvas.draw()
-                                # Get RGBA buffer from the figure
-                                buf = fig.canvas.buffer_rgba()
-                                # Convert buffer to NumPy array
-                                plot = np.asarray(buf)
-                                # Convert RGBA/RGB → BGR for OpenCV
-                                plot = cv2.cvtColor(plot, cv2.COLOR_RGB2BGR)
-                                plt.close(fig)  # IMPORTANT: prevent memory leak
+                                # # Render the Matplotlib figure
+                                # fig.canvas.draw()
+                                # # Get RGBA buffer from the figure
+                                # buf = fig.canvas.buffer_rgba()
+                                # # Convert buffer to NumPy array
+                                # plot = np.asarray(buf)
+                                # # Convert RGBA/RGB → BGR for OpenCV
+                                # plot = cv2.cvtColor(plot, cv2.COLOR_RGB2BGR)
+                                # plt.close(fig)  # IMPORTANT: prevent memory leak
 
-                                h, w = plot.shape[:2]
-                                frame[0:h, 0:w] = plot
-
+                                # h, w = plot.shape[:2]
+                                # frame[0:h, 0:w] = plot
+                                 
+                                # Convert grid coordinates to pixel coordinates
+                                img_h, img_w = frame.shape[:2]
+                                
+                                # Convert path from grid to pixel coordinates
+                                if len(diagonaldown_path_b2t) > 1:
+                                    path_pixels = []
+                                    for point in diagonaldown_path_b2t:
+                                        # point is (i, j) in grid coords - convert to (x, y) pixels
+                                        x_pixel = int(point[1] * img_w / grid_width)
+                                        y_pixel = int(point[0] * img_h / grid_height)
+                                        path_pixels.append([x_pixel, y_pixel])
+                                    path_pixels = np.array(path_pixels, dtype=np.int32)
+                                    cv2.polylines(frame, [path_pixels], False, color=(255,0,0), thickness=2)
+                                
+                                # Convert marker positions to pixel coordinates
+                                ball_pixel = (int(center_ball[0] * img_w / grid_width), int(center_ball[1] * img_h / grid_height))
+                                target_pixel = (int(target_start[0] * img_w / grid_width), int(target_start[1] * img_h / grid_height))
+                                fake_pixel = (int(fake_target[0] * img_w / grid_width), int(fake_target[1] * img_h / grid_height))
+                                
+                                print(f"DEBUG: ball_pixel={ball_pixel}, target_pixel={target_pixel}, fake_pixel={fake_pixel}")
+                                
+                                cv2.drawMarker(frame, ball_pixel, (0,255,0), cv2.MARKER_TILTED_CROSS, 40, 2)
+                                cv2.drawMarker(frame, target_pixel, (0,0,255), cv2.MARKER_TILTED_CROSS, 40, 2)
+                                cv2.drawMarker(frame, fake_pixel, (255,0,255), cv2.MARKER_DIAMOND, 40, 2)
                                 cv2.imshow('frame-image', frame)
                             else:
                                 # ts = (int(target_start[1]), int(target_start[0]))
@@ -415,40 +441,63 @@ while True:
                                 else:
                                     print("12. Ball not detected, skipping rotation calculation")
 
-                                # Use float so fractional values (0.5, 0.75) are preserved
-                                display_simple_grid = grid.astype(float)
-                                # Safe assignments: only assign if the path arrays are non-empty and within bounds
-                                if len(path_t2e) > 0:
-                                    idx = tuple(np.array(path_t2e).T)
-                                    display_simple_grid[idx] = 0.25
-                                if len(diagonaldown_path_t2e) > 0:
-                                    idx = tuple(np.array(diagonaldown_path_t2e).T)
-                                    display_simple_grid[idx] = 0.5
-                                # Highlight current target position and endpoint
-                                display_simple_grid[ts] = 1
-                                display_simple_grid[ep] = 0.75
+                                # # Use float so fractional values (0.5, 0.75) are preserved
+                                # display_simple_grid = grid.astype(float)
+                                # # Safe assignments: only assign if the path arrays are non-empty and within bounds
+                                # if len(path_t2e) > 0:
+                                #     idx = tuple(np.array(path_t2e).T)
+                                #     display_simple_grid[idx] = 0.25
+                                # if len(diagonaldown_path_t2e) > 0:
+                                #     idx = tuple(np.array(diagonaldown_path_t2e).T)
+                                #     display_simple_grid[idx] = 0.5
+                                # # Highlight current target position and endpoint
+                                # display_simple_grid[ts] = 1
+                                # display_simple_grid[ep] = 0.75
                                 
-                                fig, ax = plt.subplots(figsize=(4, 4), dpi=100)
-                                ax.imshow(display_simple_grid, cmap="gray", vmin=0, vmax=1)
-                                ax.set_title("Grid & Path")
-                                ax.axis("off")
+                                # fig, ax = plt.subplots(figsize=(4, 4), dpi=100)
+                                # ax.imshow(display_simple_grid, cmap="gray", vmin=0, vmax=1)
+                                # ax.set_title("Grid & Path")
+                                # ax.axis("off")
 
-                                # Render the Matplotlib figure
-                                fig.canvas.draw()
-                                # Get RGBA buffer from the figure
-                                buf = fig.canvas.buffer_rgba()
-                                # Convert buffer to NumPy array
-                                plot = np.asarray(buf)
-                                # Convert RGBA/RGB → BGR for OpenCV
-                                plot = cv2.cvtColor(plot, cv2.COLOR_RGB2BGR)
-                                plt.close(fig)  # IMPORTANT: prevent memory leak
+                                # # Render the Matplotlib figure
+                                # fig.canvas.draw()
+                                # # Get RGBA buffer from the figure
+                                # buf = fig.canvas.buffer_rgba()
+                                # # Convert buffer to NumPy array
+                                # plot = np.asarray(buf)
+                                # # Convert RGBA/RGB → BGR for OpenCV
+                                # plot = cv2.cvtColor(plot, cv2.COLOR_RGB2BGR)
+                                # plt.close(fig)  # IMPORTANT: prevent memory leak
 
-                                h, w = plot.shape[:2]
-                                frame[0:h, 0:w] = plot
+                                # h, w = plot.shape[:2]
+                                # frame[0:h, 0:w] = plot
+                                
+                                # Convert path from grid to pixel coordinates
+                                img_h, img_w = frame.shape[:2]
+                                if len(diagonaldown_path_t2e) > 1:
+                                    path_pixels = []
+                                    for point in diagonaldown_path_t2e:
+                                        x_pixel = int(point[1] * img_w / grid_width)
+                                        y_pixel = int(point[0] * img_h / grid_height)
+                                        path_pixels.append([x_pixel, y_pixel])
+                                    path_pixels = np.array(path_pixels, dtype=np.int32)
+                                    cv2.polylines(frame, [path_pixels], False, color=(255,0,0), thickness=2)
+                                
+                                # Convert markers to pixel coordinates
+                                ball_pixel = (int(center_ball[0] * img_w / grid_width), int(center_ball[1] * img_h / grid_height))
+                                target_pixel = (int(target_start[0] * img_w / grid_width), int(target_start[1] * img_h / grid_height))
+                                ep_coords = end_points.get(keys)
+                                ep_pixel = (int(ep_coords[0] * img_w / grid_width), int(ep_coords[1] * img_h / grid_height))
+                                
+                                cv2.drawMarker(frame, ball_pixel, (0,255,0), cv2.MARKER_TILTED_CROSS, 40, 2)
+                                cv2.drawMarker(frame, target_pixel, (0,0,255), cv2.MARKER_TILTED_CROSS, 40, 2)
+                                cv2.drawMarker(frame, ep_pixel, (255,255,0), cv2.MARKER_DIAMOND, 40, 2)
                                 cv2.imshow('frame-image', frame)
+
                                 print('14. target id', keys, "path_t2e:", path_t2e)
                     else:
                         print("1. Ball or target not detected.")
+                        cv2.imshow('frame-image', frame)
                         break
                 
                 # Display the frame once after all processing
