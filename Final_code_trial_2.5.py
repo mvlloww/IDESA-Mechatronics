@@ -193,7 +193,7 @@ center_3d = np.array([[half, half, 0]], dtype=np.float32)
 # Precompute grid coordinates for masking
 y_coords, x_coords = np.ogrid[:grid_height, :grid_width]
 # Define the radius around the center of obstacle (can calibrate)
-radius = 1.5
+radius = 3
 
 # Set target end points for pathfinding (can be changed later)
 end_points = {1:[[15,10],False], 2:[[15,35],False], 3:[[12,39],False], 4:[[5,10],False]}
@@ -215,6 +215,7 @@ sock = socket.socket(socket.AF_INET,    # Family of addresses, in this case IP t
                      socket.SOCK_DGRAM) # What protocol to use, in this case UDP (datagram)
 
 In_range = {}
+pushing_target_id = 1
 
 ''' Main loop '''
 while True:
@@ -312,7 +313,7 @@ while True:
                     pass
                 # Nothing to process this cycle; continue capturing
                 continue
-
+            
             for keys, _len in sorted_targets:
                 position_status = False
                 while position_status == False and not quit_flag:
@@ -351,12 +352,8 @@ while True:
                             break
                             print ("3. Target ID ", keys, " reached endpoint. switching to next target.")
 
-                        # compare current position with buffered position
-                        for i in range(len(ids)):
-                            if ids[i][0] != keys:
-                                # Recompute obstacles for current positions of non-target markers
-                                grid = grid_obstacle(ids, corners, keys, x_coords, y_coords, grid, radius, frame, grid_width, grid_height)
-                                print ("4. Updated grid with obstacles for non-target markers.")
+                        grid = grid_obstacle(ids, corners, keys, x_coords, y_coords, grid, radius, frame, grid_width, grid_height)
+                        print ("4. Updated grid with obstacles for non-target markers.")
 
                         # ball to target
                         # ball_idx = np.where(ids == ball_id)[0]
@@ -404,7 +401,7 @@ while True:
                                 print('6. target id', keys, "path_b2t:", diagonaldown_path_b2t)
 
                                 # Check if path has at least 2 points before accessing [1]
-                                if len(diagonaldown_path_b2t) >= 2:
+                                if len(diagonaldown_path_b2t) >= 1:
                                     # convert to dx, dy instructions for UDP sending
                                     dy = ball_start[1]-diagonaldown_path_b2t[1][0]
                                     dx = ball_start[0]-diagonaldown_path_b2t[1][1]
@@ -438,7 +435,7 @@ while True:
                                     cv2.line(frame, (x, 0), (x, img_h), (100, 100, 100), 1)
                                 
                                 # Convert path from grid to pixel coordinates
-                                if len(diagonaldown_path_b2t) > 1:
+                                if len(diagonaldown_path_b2t) >= 1:
                                     path_pixels = []
                                     for point in diagonaldown_path_b2t:
                                         # point is (i, j) in grid coords - convert to (x, y) pixels
@@ -476,7 +473,7 @@ while True:
 
                                 # convert to dx, dy instructions for UDP sending
                                 # Check if path has at least 2 points before accessing [1]
-                                if len(diagonaldown_path_t2e) < 2:
+                                if len(diagonaldown_path_t2e) < 1:
                                     print("11. Path too short for target movement, skipping")
                                     continue
                                 
@@ -511,7 +508,7 @@ while True:
                                     x = int(round(j * img_w / grid_width))
                                     cv2.line(frame, (x, 0), (x, img_h), (100, 100, 100), 1)
                                 
-                                if len(diagonaldown_path_t2e) > 1:
+                                if len(diagonaldown_path_t2e) >= 1:
                                     path_pixels = []
                                     for point in diagonaldown_path_t2e:
                                         x_pixel = int(point[1] * img_w / grid_width)
