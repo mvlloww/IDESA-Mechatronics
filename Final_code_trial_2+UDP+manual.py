@@ -132,7 +132,7 @@ CM = Camera['CM']
 dist_coef = Camera['dist_coef']
 
 # Define the size of the aruco marker in mm
-marker_size = 40
+marker_size = 87
 # Define the aruco dictionary
 aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
 # Define the aruco detection parameters
@@ -501,20 +501,18 @@ while True:
         next_target = None
         if key == ord('w'):
             print ('direction = up')
-            next_target = np.array([5, 0, compute_theta_send(yaw), 0])
+            next_target = np.array([50, 0, compute_theta_send(yaw), 0])
             
         elif key == ord('a'):
             print ('direction = left')
-            next_target = np.array([0, -5, compute_theta_send(yaw), 0])
-
+            next_target = np.array([0, -50, compute_theta_send(yaw), 0])
         elif key == ord('s'):
             print ('direction = down')
-            next_target = np.array([-5, 0, compute_theta_send(yaw), 0])
+            next_target = np.array([-50, 0, compute_theta_send(yaw), 0])
 
         elif key == ord('d'):
             print ('direction = right')
-            next_target = np.array([0, 5, compute_theta_send(yaw), 0])
-
+            next_target = np.array([0, 50, compute_theta_send(yaw), 0])
         elif key == ord('q'):
             quit_flag = True
             break
@@ -522,7 +520,7 @@ while True:
             mode = 'auto'
             print ("Auto mode activated: normal operation")
             break
-        
+
         # Default to zero command when no movement key was pressed
         if next_target is None:
             next_target = np.array([0, 0, compute_theta_send(yaw), 0])
