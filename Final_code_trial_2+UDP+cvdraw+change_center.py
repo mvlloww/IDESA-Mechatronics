@@ -401,12 +401,12 @@ while True:
                             
                             # Grid lines removed for performance
                             # Uncomment if needed:
-                            # for i in range(grid_height + 1):
-                            #     y = int(round(i * img_h / grid_height))
-                            #     cv2.line(frame, (0, y), (img_w, y), (100, 100, 100), 1)
-                            # for j in range(grid_width + 1):
-                            #     x = int(round(j * img_w / grid_width))
-                            #     cv2.line(frame, (x, 0), (x, img_h), (100, 100, 100), 1)
+                            for i in range(grid_height + 1):
+                                y = int(round(i * img_h / grid_height))
+                                cv2.line(frame, (0, y), (img_w, y), (100, 100, 100), 1)
+                            for j in range(grid_width + 1):
+                                x = int(round(j * img_w / grid_width))
+                                cv2.line(frame, (x, 0), (x, img_h), (100, 100, 100), 1)
                             
                             # Convert path from grid to pixel coordinates
                             if len(diagonaldown_path_b2t) > 1:
@@ -431,6 +431,9 @@ while True:
                                 ep_coords = end_points.get(k)[0]
                                 ep_pixel = (int(ep_coords[1] * img_w / grid_width), int(ep_coords[0] * img_h / grid_height))
                                 cv2.drawMarker(frame, ep_pixel, (255,255,0), cv2.MARKER_DIAMOND, 40, 2)
+                            
+                            # Display frame immediately after drawing
+                            cv2.imshow('frame-image', frame)
                             
 
                         elif abs(center_ball[0] - center_target[0]) <= 2 and abs(center_ball[1] - center_target[1]) <= 2:
@@ -471,12 +474,12 @@ while True:
                             
                             # Grid lines removed for performance
                             # Uncomment if needed:
-                            # for i in range(grid_height + 1):
-                            #     y = int(round(i * img_h / grid_height))
-                            #     cv2.line(frame, (0, y), (img_w, y), (100, 100, 100), 1)
-                            # for j in range(grid_width + 1):
-                            #     x = int(round(j * img_w / grid_width))
-                            #     cv2.line(frame, (x, 0), (x, img_h), (100, 100, 100), 1)
+                            for i in range(grid_height + 1):
+                                y = int(round(i * img_h / grid_height))
+                                cv2.line(frame, (0, y), (img_w, y), (100, 100, 100), 1)
+                            for j in range(grid_width + 1):
+                                x = int(round(j * img_w / grid_width))
+                                cv2.line(frame, (x, 0), (x, img_h), (100, 100, 100), 1)
                             
                             if len(diagonaldown_path_t2e) > 1:
                                 path_pixels = []
@@ -499,7 +502,8 @@ while True:
                             cv2.drawMarker(frame, ball_pixel, (0,255,0), cv2.MARKER_TILTED_CROSS, 40, 2)
                             cv2.drawMarker(frame, target_pixel, (0,0,255), cv2.MARKER_TILTED_CROSS, 40, 2)
 
-                            print('14. target id', keys, "path_t2e:", path_t2e)
+                            # Display frame immediately after drawing
+                            cv2.imshow('frame-image', frame)
                     else:
                         print("1. Ball or target not detected.")
                         break
