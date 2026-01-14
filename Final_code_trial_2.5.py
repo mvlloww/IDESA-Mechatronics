@@ -549,9 +549,10 @@ while True:
                     break
 
             # Crop rotation
-            end_points = rotate_dict(end_points, k=2)
-            print("15. Rotated end points: ", end_points)
-    
+            if In_range.get(keys)==True:
+                end_points = rotate_dict(end_points, k=2)
+                print("15. Rotated end points: ", end_points)
+        
     if quit_flag:
         break
 
