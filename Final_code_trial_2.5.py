@@ -193,7 +193,7 @@ center_3d = np.array([[half, half, 0]], dtype=np.float32)
 # Precompute grid coordinates for masking
 y_coords, x_coords = np.ogrid[:grid_height, :grid_width]
 # Define the radius around the center of obstacle (can calibrate)
-radius = 3
+radius = 1.5
 
 # Set target end points for pathfinding (can be changed later)
 end_points = {1:[[15,10],False], 2:[[15,35],False], 3:[[12,39],False], 4:[[5,10],False]}
@@ -416,7 +416,7 @@ while True:
                                         print ('8. rotate_vec:', yaw)
                                         # UDP sending
                                         next_target = np.array([dy, dx,compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
-                                        #sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
+                                        sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
                                         print ("9. message:", next_target)
                                     else:
                                         print("8. Ball not detected, skipping rotation calculation")
@@ -491,7 +491,7 @@ while True:
 
                                     # UDP sending
                                     next_target = np.array([dy, dx, compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
-                                    #sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
+                                    sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
                                     print ("13. message:", next_target)
                                 else:
                                     print("12. Ball not detected, skipping rotation calculation")
