@@ -126,10 +126,7 @@ def rotate_dict(d, k=2):
     rotated = items[-k:] + items[:-k]
     return dict(rotated)
 def compute_theta_send(theta):
-    if abs(theta) > np.pi / 2:
-        theta_send = np.sign(theta) * (np.pi - abs(theta))
-    else:
-        theta_send = -theta
+    theta_send = theta
     return theta_send
 
 ''' Import necessary libraries '''
@@ -171,7 +168,7 @@ aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
 parameters = aruco.DetectorParameters()
 
 # CAP_DSHOW to make sure it uses DirectShow backend on Windows (more stable)
-cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 2750)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
 
