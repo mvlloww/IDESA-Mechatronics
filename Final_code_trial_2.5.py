@@ -374,16 +374,22 @@ while True:
                             path_t2e = tcod.path.path2d(cost=grid, start_points=[ts], end_points=[ep], cardinal=10, diagonal=14)
                             
 
-                            if abs(ball_start[0] - target_start[0]) > 1 and abs(ball_start[1] - target_start[1]) > 1:
+                            if abs(ball_start[0] - target_start[0]) > 2 and abs(ball_start[1] - target_start[1]) > 2:
                                 # Set target to obstacle
                                 mask = (x_coords - target_start[0])**2 + (y_coords - target_start[1])**2 <= radius**2
                                 grid[mask] = 0
+                                # Draw circle on frame using pixel coordinates
+                                ox_pixel = int(target_start[0] * img_w / grid_width)
+                                oy_pixel = int(target_start[1] * img_h / grid_height)
+                                radius_pixel = int(radius * img_w / grid_width)
+                                cv2.circle(frame, (ox_pixel, oy_pixel), radius_pixel, (0,0,255), 2)
+                            
 
                                 # Get fake target position for ball to target pathfinding
                                 # Check if path_t2e has at least 2 points
                                 if len(path_t2e) >= 2:
-                                    fdy = 0.2*(target_start[1] - path_t2e[1][0])
-                                    fdx = 0.2*(target_start[0] - path_t2e[1][1])
+                                    fdy = 0.5*(target_start[1] - path_t2e[1][0])
+                                    fdx = 0.5*(target_start[0] - path_t2e[1][1])
                                     fake_target = (target_start[0] + fdx, target_start[1] + fdy)
                                     #print ("5. Fake target for ball to target pathfinding: ", fake_target)
                                 else:
@@ -403,7 +409,7 @@ while True:
                                 #print('6. target id', keys, "path_b2t:", diagonaldown_path_b2t)
 
                                 # Check if path has at least 2 points before accessing [1]
-                                if len(diagonaldown_path_b2t) >= 1:
+                                if len(diagonaldown_path_b2t) > 0:
                                     # convert to dx, dy instructions for UDP sending
                                     dy = ball_start[1]-diagonaldown_path_b2t[1][0]
                                     dx = ball_start[0]-diagonaldown_path_b2t[1][1]
