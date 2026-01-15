@@ -1,106 +1,4 @@
-''' Optimized version - Key improvements '''
-def simplify_path(path):
-
-    '''
-    simplify_path function 
-
-    :input: array of (i,j) grid coordinates from A* pathfinding algorithm
-    :param path: delete any repeating outputs between two point on the grid. So the ball movement will be continuous instead of stopping every second.
-    :return: cardinal_path (array: only changed horizontal and vertical), diagonaldown_path (array: horizontal, vertical and diagonal changes made) 
-    '''
-    cardinal_path = [path[0]]
-    i = 1 #start with second waypoint
-
-    ## deals with straight segments
-    while i < len(path) - 1:
-        n_i = abs(path[i+1][0] - path[i-1][0]) #compares next and previous waypoints i
-        n_j = abs(path[i+1][1] - path[i-1][1]) #compares next and previous waypoints j
-        n_ij = n_i*n_j #if there is a change, n_ij is non-zero
-
-        if n_ij == 0 and (path[i][0] == path[i-1][0] or path[i][1] == path[i-1][1]):
-            pass #skip waypoint
-        else:
-            cardinal_path.append(path[i])
-        i += 1
-    cardinal_path.append(path[-1])
-    cardinal_path = np.array(cardinal_path) #convert to numpy array
-
-    ## deals with falling diagonal segments
-    diagonaldown_path = [cardinal_path[0]]
-    i = 1
-    while i < len(cardinal_path) - 1:
-        c_current = cardinal_path[i]
-        c_prev = cardinal_path[i-1]
-        c_next = cardinal_path[i+1]
-        c_change_i_prev = c_current[0] - c_prev[0]
-        c_change_j_prev = c_current[1] - c_prev[1]
-        c_change_i_next = c_current[0] - c_next[0]
-        c_change_j_next = c_current[1] - c_next[1]
-
-        n_i = c_change_i_prev + c_change_i_next
-        n_j = c_change_j_prev + c_change_j_next
-
-        if n_i == 0 and n_j == 0:
-            pass #skip waypoint
-        else:
-            diagonaldown_path.append(cardinal_path[i])
-        i += 1
-    diagonaldown_path.append(cardinal_path[-1])
-
-    diagonaldown_path = np.array(diagonaldown_path)
-    
-    ## deals with rising diagonal segments
-
-    return cardinal_path, diagonaldown_path
-def get_center(center_3d, rvecs, tvecs, CM, dist_coef, frame, grid_width, grid_height):
-    '''
-    get center of ArUco code function
-
-    input: 3D center coordinates of ArUco code, rotation and translation vectors, camera matrix, distortion coefficients, current frame, grid width and height
-    output: x and y coordinates on grid of the center of the ArUco code
-    '''
-    center_2d, _ = cv2.projectPoints(center_3d, rvecs, tvecs, CM, dist_coef)
-    center_pixel = center_2d[0][0].astype(int)
-    img_h, img_w = frame.shape[:2]
-    grid_x = int(center_pixel[0] / img_w * grid_width)
-    grid_y = int(center_pixel[1] / img_h * grid_height)
-    center_grid = np.clip([grid_x, grid_y], 0, [grid_width - 1, grid_height - 1]).astype(int)
-    x, y = center_grid
-    
-    return x, y
-def grid_obstacle(ids, target_id, x_coords, y_coords, grid, radius, center_3d, rvecs, tvecs, CM, dist_coef, frame, grid_width, grid_height):
-    '''
-    generate obstacles on grid function
-
-    input: detected ArUco ids, target id to ignore, x/y coordinate arrays of grid, current grid, obstacle radius
-    output: updated grid with obstacles marked for all non-target markers
-    '''
-    for i in range(len(ids)):
-        marker_id = int(ids[i][0])
-        if marker_id != int(target_id):
-            center_2d, _ = cv2.projectPoints(center_3d, rvecs[i], tvecs[i], CM, dist_coef)
-            center_pixel = center_2d[0][0].astype(int)
-            img_h, img_w = frame.shape[:2]
-            grid_x = int(center_pixel[0] / img_w * grid_width)
-            grid_y = int(center_pixel[1] / img_h * grid_height)
-            center_grid = np.clip([grid_x, grid_y], 0, [grid_width - 1, grid_height - 1]).astype(int)
-            ox, oy = center_grid
-
-            mask = (x_coords - ox)**2 + (y_coords - oy)**2 <= radius**2
-            grid[mask] = 0
-    return grid
-def rotate_dict(d, k=2):
-    items = list(d.items())
-    k = k % len(items)   # safety for large shifts
-    rotated = items[-k:] + items[:-k]
-    return dict(rotated)
-def compute_theta_send(theta):
-    if abs(theta) > np.pi / 2:
-        theta_send = np.sign(theta) * (np.pi - abs(theta))
-    else:
-        theta_send = -theta
-    return theta_send
-
+''' Complete Optimized Version with All Functions '''
 
 import cv2
 import numpy as np
@@ -111,6 +9,8 @@ import os
 import socket
 import struct
 from collections import deque
+
+### add predefined functions here ###
 
 class OptimizedPathPlanner:
     def __init__(self, calib_path, grid_size=(20, 40)):
@@ -137,12 +37,14 @@ class OptimizedPathPlanner:
         # State tracking
         self.ball_id = 8
         self.end_points = {1:[10,39], 2:[11,39], 3:[12,39], 4:[13,39]}
-        self.id_buffer = {}
+        # self.id_buffer = {}
+        
+        # Detection cache, avoids repeating ArUco detection
         self.last_detection = None
         self.last_detection_time = 0
         self.detection_cache_duration = 0.1  # Cache for 100ms
         
-        # Path cache
+        # Path cache, avoids repeating pathfinding function
         self.path_cache = {}
         self.cache_valid_for = 0.2  # Cache paths for 200ms
         
@@ -152,13 +54,11 @@ class OptimizedPathPlanner:
         
         # UDP setup
         self.UDP_IP = "138.38.229.206"
-        self.UDP_PORT = 50001
+        self.UDP_PORT = 50000
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     
     def load_calibration(self, calib_path):
         """Load calibration once"""
-        if not os.path.exists(calib_path):
-            raise FileNotFoundError(f"Calibration file not found at: {calib_path}")
         Camera = np.load(calib_path)
         self.CM = Camera['CM']
         self.dist_coef = Camera['dist_coef']
@@ -168,23 +68,18 @@ class OptimizedPathPlanner:
         current_time = time.time()
         
         # Use cache if recent
-        if (self.last_detection is not None and 
-            current_time - self.last_detection_time < self.detection_cache_duration):
+        if (self.last_detection is not None and current_time - self.last_detection_time < self.detection_cache_duration):
             return self.last_detection
         
         # Perform detection
-        corners, ids, rejected = aruco.detectMarkers(
-            gray, self.aruco_dict, parameters=self.parameters
-        )
+        corners, ids, rejected = aruco.detectMarkers(gray, self.aruco_dict, parameters=self.parameters)
         
         # Cache results
         if ids is not None and len(ids) > 0:
-            rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(
-                corners, self.marker_size, self.CM, self.dist_coef
-            )
+            rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(corners, self.marker_size, self.CM, self.dist_coef)
             self.last_detection = (corners, ids, rvecs, tvecs)
-        else:
-            self.last_detection = (None, None, None, None)
+        # else:
+        #     self.last_detection = (None, None, None, None)
         
         self.last_detection_time = current_time
         return self.last_detection
@@ -201,25 +96,20 @@ class OptimizedPathPlanner:
                 return path
         
         # Compute new path
-        path = tcod.path.path2d(
-            cost=self.grid, 
-            start_points=[start], 
-            end_points=[end], 
-            cardinal=10, 
-            diagonal=14
-        )
+        path = tcod.path.path2d(cost=self.grid, start_points=[start], end_points=[end], cardinal=10, diagonal=14)
         
         # Update cache
         self.path_cache[cache_key] = (path, current_time)
         
         # Clean old cache entries
         if len(self.path_cache) > 50:  # Limit cache size
+            # Remove oldest entry
             oldest = min(self.path_cache.items(), key=lambda x: x[1][1])[0]
             del self.path_cache[oldest]
         
         return path
     
-    def update_grid_obstacles_batch(self, ids, rvecs, tvecs, frame, ignore_id=None):
+    def update_grid_obstacles_batch(self, ids, rvecs, tvecs, frame, ignore_id):
         """Batch update obstacles for all markers at once"""
         # Reset grid
         self.grid.fill(1)
@@ -236,9 +126,7 @@ class OptimizedPathPlanner:
             if ignore_id is not None and marker_id == ignore_id:
                 continue
                 
-            center_2d, _ = cv2.projectPoints(
-                self.center_3d, rvecs[i], tvecs[i], self.CM, self.dist_coef
-            )
+            center_2d, _ = cv2.projectPoints(self.center_3d, rvecs[i], tvecs[i], self.CM, self.dist_coef)
             center_pixel = center_2d[0][0].astype(int)
             
             grid_x = int(center_pixel[0] / img_w * self.grid_width)
@@ -261,9 +149,7 @@ class OptimizedPathPlanner:
         """Optimized center calculation"""
         img_h, img_w = frame.shape[:2]
         
-        center_2d, _ = cv2.projectPoints(
-            self.center_3d, rvec, tvec, self.CM, self.dist_coef
-        )
+        center_2d, _ = cv2.projectPoints(self.center_3d, rvec, tvec, self.CM, self.dist_coef)
         center_pixel = center_2d[0][0].astype(int)
         
         grid_x = int(center_pixel[0] / img_w * self.grid_width)
@@ -271,6 +157,7 @@ class OptimizedPathPlanner:
         
         return np.clip([grid_x, grid_y], 0, [self.grid_width-1, self.grid_height-1]).astype(int)
     
+    ### please chnage to desired visual function ###
     def create_visualization(self, paths, highlights):
         """Optimized visualization without Matplotlib overhead"""
         # Create display grid (use float for coloring)
@@ -278,19 +165,18 @@ class OptimizedPathPlanner:
         
         # Apply path coloring
         for i, path in enumerate(paths):
-            if len(path) > 0:
-                color_value = 0.25 + (i * 0.25)  # Vary colors for different paths
-                for point in path:
-                    if 0 <= point[0] < self.grid_height and 0 <= point[1] < self.grid_width:
-                        display[point] = color_value
-        
+            color_value = 0.25 + (i * 0.25)  # Vary colors for different paths
+            for point in path:
+                if 0 <= point[0] < self.grid_height and 0 <= point[1] < self.grid_width:
+                    display[point] = color_value
+    
         # Apply highlights
         for point, value in highlights.items():
             if 0 <= point[0] < self.grid_height and 0 <= point[1] < self.grid_width:
                 display[point] = value
         
         # Resize for display
-        display_resized = cv2.resize(display, (400, 200), interpolation=cv2.INTER_NEAREST)
+        display_resized = cv2.resize(display, (200,400), interpolation=cv2.INTER_NEAREST)
         display_colored = cv2.applyColorMap((display_resized * 255).astype(np.uint8), cv2.COLORMAP_JET)
         
         return display_colored
@@ -307,8 +193,9 @@ class OptimizedPathPlanner:
             return frame
         
         # Update grid with obstacles
+        # Create a unique key (hash) for current grid state
         grid_state_key = hash(tuple(sorted(ids.flatten())))
-        self.update_grid_obstacles_batch(ids, rvecs, tvecs, frame)
+        self.update_grid_obstacles_batch(ids, rvecs, tvecs, frame, ignore_id=self.ball_id)
         
         # Find ball and targets
         ball_indices = np.where(ids == self.ball_id)[0]

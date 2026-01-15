@@ -501,19 +501,19 @@ while True:
         next_target = None
         if key == ord('w'):
             print ('direction = up')
-            next_target = np.array([8, 0, compute_theta_send(yaw), 0])
+            next_target = np.array([5, 0, compute_theta_send(yaw), 0])
             
         elif key == ord('a'):
             print ('direction = left')
-            next_target = np.array([0, -8, compute_theta_send(yaw), 0])
+            next_target = np.array([0, -5, compute_theta_send(yaw), 0])
 
         elif key == ord('s'):
             print ('direction = down')
-            next_target = np.array([-8, 0, compute_theta_send(yaw), 0])
+            next_target = np.array([-5, 0, compute_theta_send(yaw), 0])
 
         elif key == ord('d'):
             print ('direction = right')
-            next_target = np.array([0, 8, compute_theta_send(yaw), 0])
+            next_target = np.array([0, 5, compute_theta_send(yaw), 0])
 
         elif key == ord('q'):
             quit_flag = True
