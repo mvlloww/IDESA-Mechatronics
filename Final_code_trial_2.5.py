@@ -276,7 +276,7 @@ while True:
 
                 # Get center of target ArUco code on grid
                 start_point = get_center(corners[t], frame, grid_width, grid_height)
-                print("1. Start Point for ID ", marker_id, ": ", start_point)
+                #print("1. Start Point for ID ", marker_id, ": ", start_point)
 
                 # append start points and id[t] to id_buffer
                 if marker_id not in id_buffer:
@@ -300,15 +300,17 @@ while True:
                     # append total path to target_dict 
                     target_dict[marker_id] = len(total_path)
                 else:
-                    print(f"DEBUG: Marker ID {marker_id} has no endpoint mapping in end_points; skipping.")
+                    pass
+                    #print(f"DEBUG: Marker ID {marker_id} has no endpoint mapping in end_points; skipping.")
             # Sort target_dict based on path length
             sorted_targets = sorted(target_dict.items(), key=lambda item: item[1])
-            print("2. Sorted Targets based on path length: ", sorted_targets) 
+            #print("2. Sorted Targets based on path length: ", sorted_targets) 
 
             if len(sorted_targets) == 0:
                 try:
-                    print("DEBUG: No targets matched configured end_points keys.")
-                    print("DEBUG: Configured end_points keys:", list(end_points.keys()))
+                    pass
+                    #print("DEBUG: No targets matched configured end_points keys.")
+                    #print("DEBUG: Configured end_points keys:", list(end_points.keys()))
                 except Exception:
                     pass
                 # Nothing to process this cycle; continue capturing
@@ -350,10 +352,10 @@ while True:
                             position_status = True
                             In_range[keys] = True
                             break
-                            print ("3. Target ID ", keys, " reached endpoint. switching to next target.")
+                            #print ("3. Target ID ", keys, " reached endpoint. switching to next target.")
 
                         grid = grid_obstacle(ids, corners, keys, x_coords, y_coords, grid, radius, frame, grid_width, grid_height)
-                        print ("4. Updated grid with obstacles for non-target markers.")
+                        #print ("4. Updated grid with obstacles for non-target markers.")
 
                         # ball to target
                         # ball_idx = np.where(ids == ball_id)[0]
@@ -366,7 +368,7 @@ while True:
                             ts = (int(target_start[1]), int(target_start[0])) # (x,y) -> (y,x) format
                             endpoint_xy = get_endpoint_xy(end_points.get(keys))
                             if endpoint_xy is None:
-                                print(f"DEBUG: Target ID {keys} has no valid endpoint mapping; skipping.")
+                                #print(f"DEBUG: Target ID {keys} has no valid endpoint mapping; skipping.")
                                 continue
                             ep = (int(endpoint_xy[0]), int(endpoint_xy[1])) # (x,y) format
                             path_t2e = tcod.path.path2d(cost=grid, start_points=[ts], end_points=[ep], cardinal=10, diagonal=14)
@@ -383,11 +385,11 @@ while True:
                                     fdy = 0.2*(target_start[1] - path_t2e[1][0])
                                     fdx = 0.2*(target_start[0] - path_t2e[1][1])
                                     fake_target = (target_start[0] + fdx, target_start[1] + fdy)
-                                    print ("5. Fake target for ball to target pathfinding: ", fake_target)
+                                    #print ("5. Fake target for ball to target pathfinding: ", fake_target)
                                 else:
                                     # Path too short, use target position directly
                                     fake_target = target_start
-                                    print ("5. Path too short, using target position as fake target: ", fake_target)
+                                    #print ("5. Path too short, using target position as fake target: ", fake_target)
                                 
                                 # pathfinding ball to fake target
                                 bs = (int(ball_start[1]), int(ball_start[0]))
@@ -398,14 +400,14 @@ while True:
                                     _, diagonaldown_path_b2t = simplify_path(path_b2t)
                                 else:
                                     diagonaldown_path_b2t = []
-                                print('6. target id', keys, "path_b2t:", diagonaldown_path_b2t)
+                                #print('6. target id', keys, "path_b2t:", diagonaldown_path_b2t)
 
                                 # Check if path has at least 2 points before accessing [1]
                                 if len(diagonaldown_path_b2t) >= 1:
                                     # convert to dx, dy instructions for UDP sending
                                     dy = ball_start[1]-diagonaldown_path_b2t[1][0]
                                     dx = ball_start[0]-diagonaldown_path_b2t[1][1]
-                                    print ('7. dx, dy:', dx, dy, ball_start, diagonaldown_path_b2t[1])
+                                    #print ('7. dx, dy:', dx, dy, ball_start, diagonaldown_path_b2t[1])
 
                                     # Recalculate ball_idx for current frame
                                     ball_idx = np.where(ids == ball_id)[0]
@@ -413,16 +415,17 @@ while True:
                                         rotate_vec = rvecs[ball_idx[0]][0]
                                         R, _ = cv2.Rodrigues(rvecs[ball_idx[0]][0])
                                         yaw = np.arctan2(R[1, 0], R[0, 0])
-                                        print ('8. rotate_vec:', yaw)
+                                        #print ('8. rotate_vec:', yaw)
                                         # UDP sending
                                         next_target = np.array([dy, dx,compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
                                         sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
                                         print ("9. message:", next_target)
                                     else:
-                                        print("8. Ball not detected, skipping rotation calculation")
+                                        #print("8. Ball not detected, skipping rotation calculation")
+                                        pass
                                 else:
-                                    print("7. Path too short for ball-to-target movement")
-                                 
+                                    #print("7. Path too short for ball-to-target movement")
+                                    pass
                                 # Convert grid coordinates to pixel coordinates
                                 img_h, img_w = frame.shape[:2]
                                 
@@ -450,7 +453,7 @@ while True:
                                 target_pixel = (int(target_start[0] * img_w / grid_width), int(target_start[1] * img_h / grid_height))
                                 fake_pixel = (int(fake_target[0] * img_w / grid_width), int(fake_target[1] * img_h / grid_height))
                                 
-                                print(f"DEBUG: ball_pixel={ball_pixel}, target_pixel={target_pixel}, fake_pixel={fake_pixel}")
+                                #print(f"DEBUG: ball_pixel={ball_pixel}, target_pixel={target_pixel}, fake_pixel={fake_pixel}")
                                 
                                 cv2.drawMarker(frame, ball_pixel, (0,255,0), cv2.MARKER_TILTED_CROSS, 40, 2)
                                 cv2.drawMarker(frame, target_pixel, (0,0,255), cv2.MARKER_TILTED_CROSS, 40, 2)
@@ -469,17 +472,17 @@ while True:
                                     _, diagonaldown_path_t2e = simplify_path(path_t2e)
                                 else:
                                     diagonaldown_path_t2e = []
-                                print('10. target id', keys, "path_t2e:", diagonaldown_path_t2e)
+                                #print('10. target id', keys, "path_t2e:", diagonaldown_path_t2e)
 
                                 # convert to dx, dy instructions for UDP sending
                                 # Check if path has at least 2 points before accessing [1]
                                 if len(diagonaldown_path_t2e) < 1:
-                                    print("11. Path too short for target movement, skipping")
+                                    #print("11. Path too short for target movement, skipping")
                                     continue
                                 
                                 dy = target_start[1]-diagonaldown_path_t2e[1][0]
                                 dx = target_start[0]-diagonaldown_path_t2e[1][1]
-                                print ('11. dx, dy:', dx, dy, target_start, diagonaldown_path_t2e[1])
+                                #print ('11. dx, dy:', dx, dy, target_start, diagonaldown_path_t2e[1])
 
                                 # Recalculate ball_idx for current frame
                                 ball_idx = np.where(ids == ball_id)[0]
@@ -487,14 +490,15 @@ while True:
                                     rotate_vec = rvecs[ball_idx[0]][0]
                                     R, _ = cv2.Rodrigues(rvecs[ball_idx[0]][0])
                                     yaw = np.arctan2(R[1, 0], R[0, 0])
-                                    print ('12. rotate_vec:', yaw)
+                                    #print ('12. rotate_vec:', yaw)
 
                                     # UDP sending
                                     next_target = np.array([dy, dx, compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
                                     sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
                                     print ("13. message:", next_target)
                                 else:
-                                    print("12. Ball not detected, skipping rotation calculation")
+                                    #print("12. Ball not detected, skipping rotation calculation")
+                                    pass
 
                                 
                                 # Convert path from grid to pixel coordinates
@@ -533,9 +537,9 @@ while True:
                                 
                                 cv2.imshow('frame-image', frame)
 
-                                print('14. target id', keys, "path_t2e:", path_t2e)
+                                #print('14. target id', keys, "path_t2e:", path_t2e)
                     else:
-                        print("1. Ball or target not detected.")
+                        #print("1. Ball or target not detected.")
                         cv2.imshow('frame-image', frame)
                         break
                 
@@ -548,7 +552,7 @@ while True:
             # Crop rotation
             if In_range.get(keys)==True:
                 end_points = rotate_dict(end_points, k=2)
-                print("15. Rotated end points: ", end_points)
+                #print("15. Rotated end points: ", end_points)
         
     if quit_flag:
         break
