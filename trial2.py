@@ -55,19 +55,18 @@ def get_center(center_3d, rvecs, tvecs, CM, dist_coef, frame, grid_width, grid_h
     '''
     get center of ArUco code function
 
-    input: corners of ArUco marker, current frame, grid width and height
+    input: 3D center coordinates of ArUco code, rotation and translation vectors, camera matrix, distortion coefficients, current frame, grid width and height
     output: x and y coordinates on grid of the center of the ArUco code
     '''
-
-    pts = corners.reshape((4, 2))
-    center_pixel = pts.mean(axis=0)  # Mean of all 4 corner points
+    center_2d, _ = cv2.projectPoints(center_3d, rvecs, tvecs, CM, dist_coef)
+    center_pixel = center_2d[0][0].astype(int)
     img_h, img_w = frame.shape[:2]
     grid_x = int(center_pixel[0] / img_w * grid_width)
     grid_y = int(center_pixel[1] / img_h * grid_height)
     center_grid = np.clip([grid_x, grid_y], 0, [grid_width - 1, grid_height - 1]).astype(int)
     x, y = center_grid
-
-    return (x, y)
+    
+    return x, y
 def grid_obstacle(ids, target_id, x_coords, y_coords, grid, radius, center_3d, rvecs, tvecs, CM, dist_coef, frame, grid_width, grid_height):
     '''
     generate obstacles on grid function
@@ -75,15 +74,12 @@ def grid_obstacle(ids, target_id, x_coords, y_coords, grid, radius, center_3d, r
     input: detected ArUco ids, target id to ignore, x/y coordinate arrays of grid, current grid, obstacle radius
     output: updated grid with obstacles marked for all non-target markers
     '''
-    img_h, img_w = frame.shape[:2]
-    
     for i in range(len(ids)):
         marker_id = int(ids[i][0])
-        if marker_id != int(target_id) and marker_id != int(ball_id):
-            # Get corners for this specific marker
-            pts = corners[i].reshape((4, 2))
-            center_pixel = pts.mean(axis=0)
-            
+        if marker_id != int(target_id):
+            center_2d, _ = cv2.projectPoints(center_3d, rvecs[i], tvecs[i], CM, dist_coef)
+            center_pixel = center_2d[0][0].astype(int)
+            img_h, img_w = frame.shape[:2]
             grid_x = int(center_pixel[0] / img_w * grid_width)
             grid_y = int(center_pixel[1] / img_h * grid_height)
             center_grid = np.clip([grid_x, grid_y], 0, [grid_width - 1, grid_height - 1]).astype(int)
@@ -91,12 +87,6 @@ def grid_obstacle(ids, target_id, x_coords, y_coords, grid, radius, center_3d, r
 
             mask = (x_coords - ox)**2 + (y_coords - oy)**2 <= radius**2
             grid[mask] = 0
-
-            # Draw circle on frame using pixel coordinates
-            ox_pixel = int(ox * img_w / grid_width)
-            oy_pixel = int(oy * img_h / grid_height)
-            radius_pixel = int(radius * img_w / grid_width)
-            cv2.circle(frame, (ox_pixel, oy_pixel), radius_pixel, (0,0,255), 2)
     return grid
 def rotate_dict(d, k=2):
     items = list(d.items())
@@ -142,7 +132,7 @@ CM = Camera['CM']
 dist_coef = Camera['dist_coef']
 
 # Define the size of the aruco marker in mm
-marker_size = 87
+marker_size = 40
 # Define the aruco dictionary
 aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
 # Define the aruco detection parameters
@@ -511,18 +501,20 @@ while True:
         next_target = None
         if key == ord('w'):
             print ('direction = up')
-            next_target = np.array([50, 0, compute_theta_send(yaw), 0])
+            next_target = np.array([8, 0, compute_theta_send(yaw), 0])
             
         elif key == ord('a'):
             print ('direction = left')
-            next_target = np.array([0, -50, compute_theta_send(yaw), 0])
+            next_target = np.array([0, -8, compute_theta_send(yaw), 0])
+
         elif key == ord('s'):
             print ('direction = down')
-            next_target = np.array([-50, 0, compute_theta_send(yaw), 0])
+            next_target = np.array([-8, 0, compute_theta_send(yaw), 0])
 
         elif key == ord('d'):
             print ('direction = right')
-            next_target = np.array([0, 50, compute_theta_send(yaw), 0])
+            next_target = np.array([0, 8, compute_theta_send(yaw), 0])
+
         elif key == ord('q'):
             quit_flag = True
             break
@@ -530,7 +522,7 @@ while True:
             mode = 'auto'
             print ("Auto mode activated: normal operation")
             break
-
+        
         # Default to zero command when no movement key was pressed
         if next_target is None:
             next_target = np.array([0, 0, compute_theta_send(yaw), 0])
