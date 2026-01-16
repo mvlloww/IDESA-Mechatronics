@@ -159,8 +159,8 @@ def get_2d_angle_from_corners(corners):
     
     Coordinate system:
     - 0° = marker's forward direction pointing UP the screen (negative Y)
-    - Positive theta = clockwise rotation from up
-    - Negative theta = anticlockwise rotation from up
+    - Positive theta = anticlockwise rotation from up
+    - Negative theta = clockwise rotation from up
     
     This ignores tilt and pitch, only measuring in-plane rotation.
     """
@@ -173,9 +173,9 @@ def get_2d_angle_from_corners(corners):
     forward_x = top_edge[1]   # rotated 90° CW: [y, -x]
     forward_y = -top_edge[0]
     
-    # Calculate angle from screen-up (negative Y axis), with CW positive
-    # atan2(x, -y) gives angle from Y- axis with CW positive in image coords
-    angle = np.arctan2(forward_x, -forward_y)
+    # Calculate angle from screen-up (negative Y axis), with CCW positive
+    # atan2(-x, -y) gives angle from Y- axis with CCW (anticlockwise) positive
+    angle = np.arctan2(-forward_x, -forward_y)
     return angle
 
 
@@ -219,7 +219,7 @@ aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
 parameters = aruco.DetectorParameters()
 
 # CAP_DSHOW to make sure it uses DirectShow backend on Windows (more stable)
-cap = cv2.VideoCapture(1)
+cap = cv2.VideoCapture(0)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 2750)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
 
