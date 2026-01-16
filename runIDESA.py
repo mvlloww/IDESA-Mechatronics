@@ -193,14 +193,14 @@ y_coords, x_coords = np.ogrid[:grid_height, :grid_width]
 radius = 1.5
 
 # Set target end points for pathfinding (can be changed later)
-#end_points = {1:[15,10], 2:[15,35], 3:[12,39], 4:[5,10]}
-end_points = {1:[15,10], 4:[5,10]}
+end_points = {1:[5,35], 4:[15,10]}
+#end_points = {1:[5,10], 2:[5,35], 3:[10,10], 4:[10,35], 5:[15,10], 6:[15,35]}
 # Set ball ArUco id
 ball_id = 8
 # Create id_buffer dictionary
 id_buffer = {}
 
-'''Temperary variables'''
+'''Temporary variables'''
 IsFire = False
 quit_flag = False
 mode = 'auto'  # can be 'auto' or 'manual'
@@ -274,9 +274,9 @@ while True:
                 grid = grid_obstacle(ids, corners, marker_id, x_coords, y_coords, grid, radius, frame, grid_width, grid_height)
                 
                 if get_center(corners[t], frame, grid_width, grid_height) == end_points.get(marker_id):
-                    In_range[marker_id] = True
+                    In_range[marker_id] = True 
                     continue
-                elif marker_id in end_points.keys():
+                elif marker_id in end_points.keys() and get_center(corners[t], frame, grid_width, grid_height) != end_points.get(marker_id):
                     In_range[marker_id] = False
 
                 # Get center of target ArUco code on grid
@@ -304,22 +304,8 @@ while True:
                     total_path = np.concatenate((path_b2t, path_t2e)) if len(path_b2t) > 0 else path_t2e
                     # append total path to target_dict 
                     target_dict[marker_id] = len(total_path)
-                else:
-                    pass
-                    #print(f"DEBUG: Marker ID {marker_id} has no endpoint mapping in end_points; skipping.")
             # Sort target_dict based on path length
             sorted_targets = sorted(target_dict.items(), key=lambda item: item[1])
-            #print("2. Sorted Targets based on path length: ", sorted_targets) 
-
-            if len(sorted_targets) == 0:
-                try:
-                    pass
-                    #print("DEBUG: No targets matched configured end_points keys.")
-                    #print("DEBUG: Configured end_points keys:", list(end_points.keys()))
-                except Exception:
-                    pass
-                # Nothing to process this cycle; continue capturing
-                continue
             
             for keys, _len in sorted_targets:
                 position_status = False
@@ -366,11 +352,7 @@ while True:
                             #print ("3. Target ID ", keys, " reached endpoint. switching to next target.")
 
                         grid = grid_obstacle(ids, corners, keys, x_coords, y_coords, grid, radius, frame, grid_width, grid_height)
-                        #print ("4. Updated grid with obstacles for non-target markers.")
 
-                        # ball to target
-                        # ball_idx = np.where(ids == ball_id)[0]
-                        # key_idx = np.where(ids == keys)[0]
                         if center_ball is not None and center_key is not None:
                             ball_start = center_ball
                             target_start = center_key
@@ -378,9 +360,6 @@ while True:
                             # pathfinding target to end point
                             ts = (int(target_start[1]), int(target_start[0])) # (x,y) -> (y,x) format
                             endpoint_xy = get_endpoint_xy(end_points.get(keys))
-                            if endpoint_xy is None:
-                                #print(f"DEBUG: Target ID {keys} has no valid endpoint mapping; skipping.")
-                                continue
                             ep = (int(endpoint_xy[0]), int(endpoint_xy[1])) # (x,y) format
                             path_t2e = tcod.path.path2d(cost=grid, start_points=[ts], end_points=[ep], cardinal=10, diagonal=14)
                             
@@ -397,27 +376,8 @@ while True:
                                 oy_pixel = int(target_start[1] * img_h / grid_height)
                                 radius_pixel = int(radius * img_w / grid_width)
                                 cv2.circle(frame, (ox_pixel, oy_pixel), radius_pixel, (0,0,255), 2)
-                            
 
-                                # # Get fake target position for ball to target pathfinding
-                                # # Check if path_t2e has at least 2 points
-                                # if len(path_t2e) >= 2:
-                                #     fdy = 0.5*(target_start[1] - path_t2e[1][0])
-                                #     fdx = 0.5*(target_start[0] - path_t2e[1][1])
-                                #     fake_target = (target_start[0] + fdx, target_start[1] + fdy)
-                                #     #print ("5. Fake target for ball to target pathfinding: ", fake_target)
-                                # else:
-                                #     # Path too short, use target position directly
-                                #     fake_target = target_start
-                                #     #print ("5. Path too short, using target position as fake target: ", fake_target)
-
-                                # # Get fake target position for ball to target pathfinding
-                                # # Check if path_t2e has at least 2 points
-                                # fdy = 1+(target_start[1] - path_t2e[1][0])
-                                # fdx = 1+(target_start[0] - path_t2e[1][1])
-                                # fake_target = (target_start[0] + fdx, target_start[1] + fdy)
-                                # #print ("5. Fake target for ball to target pathfinding: ", fake_target)
-
+                                # Determine fake target position opposite to endpoint
                                 if len(path_t2e) >= 2:
                                     # Vector from target to endpoint
                                     vec_t2e = (path_t2e[1][1] - target_start[0], path_t2e[1][0] - target_start[1])
@@ -442,9 +402,8 @@ while True:
                                 # Check if path has at least 2 points before accessing [1]
                                 if len(diagonaldown_path_b2t) > 0:
                                     # convert to dx, dy instructions for UDP sending
-                                    dy = ball_start[1]-diagonaldown_path_b2t[1][0]
+                                    dy = diagonaldown_path_b2t[1][0] - ball_start[1]
                                     dx = diagonaldown_path_b2t[1][1] - ball_start[0]
-                                    #print ('7. dx, dy:', dx, dy, ball_start, diagonaldown_path_b2t[1])
 
                                     # Recalculate ball_idx for current frame
                                     ball_idx = np.where(ids == ball_id)[0]
@@ -452,17 +411,10 @@ while True:
                                         rotate_vec = rvecs[ball_idx[0]][0]
                                         R, _ = cv2.Rodrigues(rvecs[ball_idx[0]][0])
                                         yaw = np.arctan2(R[1, 0], R[0, 0])
-                                        #print ('8. rotate_vec:', yaw)
                                         # UDP sending
                                         next_target = np.array([dy, dx,compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
                                         sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
                                         print ("9. message:", next_target)
-                                    else:
-                                        #print("8. Ball not detected, skipping rotation calculation")
-                                        pass
-                                else:
-                                    #print("7. Path too short for ball-to-target movement")
-                                    pass
                                 # Convert grid coordinates to pixel coordinates
                                 img_h, img_w = frame.shape[:2]
                                 
@@ -490,8 +442,6 @@ while True:
                                 target_pixel = (int(target_start[0] * img_w / grid_width), int(target_start[1] * img_h / grid_height))
                                 fake_pixel = (int(fake_target[0] * img_w / grid_width), int(fake_target[1] * img_h / grid_height))
                                 
-                                #print(f"DEBUG: ball_pixel={ball_pixel}, target_pixel={target_pixel}, fake_pixel={fake_pixel}")
-                                
                                 cv2.drawMarker(frame, ball_pixel, (0,255,0), cv2.MARKER_TILTED_CROSS, 40, 2)
                                 cv2.drawMarker(frame, target_pixel, (0,0,255), cv2.MARKER_TILTED_CROSS, 40, 2)
                                 cv2.drawMarker(frame, fake_pixel, (255,0,255), cv2.MARKER_DIAMOND, 40, 2)
@@ -499,27 +449,24 @@ while True:
                                     ep_coords = end_points.get(k)
                                     ep_pixel = (int(ep_coords[1] * img_w / grid_width), int(ep_coords[0] * img_h / grid_height))
                                     cv2.drawMarker(frame, ep_pixel, (255,255,0), cv2.MARKER_DIAMOND, 40, 2)
+                                    # Draw the id number next to the endpoint marker
+                                    text_pos = (ep_pixel[0] + 10, ep_pixel[1] - 10)
+                                    cv2.putText(frame, str(k), text_pos, cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,0), 2, cv2.LINE_AA)
                                 
                                 cv2.imshow('frame-image', frame)
                             else:
-                                # ts = (int(target_start[1]), int(target_start[0]))
-                                # ep = (int(end_points.get(keys)[0]), int(end_points.get(keys)[1]))
-                                # path_t2e = tcod.path.path2d(cost=grid, start_points=[ts], end_points=[ep], cardinal=10, diagonal=14)
                                 if len(path_t2e) > 0:
                                     _, diagonaldown_path_t2e = simplify_path(path_t2e)
                                 else:
                                     diagonaldown_path_t2e = []
-                                #print('10. target id', keys, "path_t2e:", diagonaldown_path_t2e)
 
                                 # convert to dx, dy instructions for UDP sending
                                 # Check if path has at least 2 points before accessing [1]
                                 if len(diagonaldown_path_t2e) < 1:
-                                    #print("11. Path too short for target movement, skipping")
                                     continue
                                 
-                                dy = target_start[1]-diagonaldown_path_t2e[1][0]
+                                dy = diagonaldown_path_t2e[1][0] - target_start[1]
                                 dx = diagonaldown_path_t2e[1][1] - target_start[0]
-                                #print ('11. dx, dy:', dx, dy, target_start, diagonaldown_path_t2e[1])
 
                                 # Recalculate ball_idx for current frame
                                 ball_idx = np.where(ids == ball_id)[0]
@@ -527,17 +474,12 @@ while True:
                                     rotate_vec = rvecs[ball_idx[0]][0]
                                     R, _ = cv2.Rodrigues(rvecs[ball_idx[0]][0])
                                     yaw = np.arctan2(R[1, 0], R[0, 0])
-                                    #print ('12. rotate_vec:', yaw)
 
                                     # UDP sending
                                     next_target = np.array([dy, dx, compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
                                     sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
                                     print ("13. message:", next_target)
-                                else:
-                                    #print("12. Ball not detected, skipping rotation calculation")
-                                    pass
 
-                                
                                 # Convert path from grid to pixel coordinates
                                 img_h, img_w = frame.shape[:2]
                                 
@@ -565,31 +507,25 @@ while True:
                                     ep_coords = end_points.get(k)
                                     ep_pixel = (int(ep_coords[1] * img_w / grid_width), int(ep_coords[0] * img_h / grid_height))
                                     cv2.drawMarker(frame, ep_pixel, (255,255,0), cv2.MARKER_DIAMOND, 40, 2)
+                                    # Draw the id number next to the endpoint marker
+                                    text_pos = (ep_pixel[0] + 10, ep_pixel[1] - 10)
+                                    cv2.putText(frame, str(k), text_pos, cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,0), 2, cv2.LINE_AA)
 
-                                
                                 cv2.drawMarker(frame, ball_pixel, (0,255,0), cv2.MARKER_TILTED_CROSS, 40, 2)
                                 cv2.drawMarker(frame, target_pixel, (0,0,255), cv2.MARKER_TILTED_CROSS, 40, 2)
-                                
-
-                                
                                 cv2.imshow('frame-image', frame)
-
-                                #print('14. target id', keys, "path_t2e:", path_t2e)
                     else:
-                        #print("1. Ball or target not detected.")
                         cv2.imshow('frame-image', frame)
                         break
                 
                 # Display the frame once after all processing
                 #cv2.imshow('frame-image', frame)
-                
                 if quit_flag or mode == 'manual':
                     break
 
             # Crop rotation
             if In_range.get(keys)==True:
                 end_points = rotate_dict(end_points, k=2)
-                #print("15. Rotated end points: ", end_points)
         
     while mode == 'manual' and not quit_flag:
         
