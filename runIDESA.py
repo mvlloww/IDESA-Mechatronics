@@ -128,6 +128,26 @@ def rotate_dict(d, k=2):
 def compute_theta_send(theta):
     theta_send = theta
     return theta_send
+def bouncing_ball(dy, dx, ball_start):
+    '''
+    bouncing ball function
+
+    input: dy, dx (grid movement instructions), ball start position
+    output: adjusted dy, dx to simulate bouncing effect
+    '''
+    ball_x = ball_start[0] + dx
+    ball_y = ball_start[1] + dy
+    if ball_x <=1:
+        dx = -19
+    elif ball_x>=39:
+        dx = 19
+    if ball_y <=1:
+        dy = 9
+    elif ball_y>=19:
+        dy = -9
+    return dy, dx
+
+
 
 ''' Import necessary libraries '''
 # This is the vision library OpenCV
@@ -209,7 +229,7 @@ mode = 'auto'  # can be 'auto' or 'manual'
 # This is the IP address of the machine that the data will be send to
 UDP_IP = "138.38.229.206" #clearpass IP address for RPI 3B Model +
 # This is the RENOTE port the machine will reply on (on that machine this is the value for the LOCAL port)
-UDP_PORT = 50000
+UDP_PORT = 50001
 sock = socket.socket(socket.AF_INET,    # Family of addresses, in this case IP type 
                      socket.SOCK_DGRAM) # What protocol to use, in this case UDP (datagram)
 
@@ -406,6 +426,7 @@ while True:
                                     # convert to dx, dy instructions for UDP sending
                                     dy = diagonaldown_path_b2t[1][0] - ball_start[1]
                                     dx = diagonaldown_path_b2t[1][1] - ball_start[0]
+                                    dy, dx = bouncing_ball(dy, dx, ball_start)
 
                                     # Recalculate ball_idx for current frame
                                     ball_idx = np.where(ids == ball_id)[0]
@@ -469,6 +490,7 @@ while True:
                                 
                                 dy = diagonaldown_path_t2e[1][0] - target_start[1]
                                 dx = diagonaldown_path_t2e[1][1] - target_start[0]
+                                dy, dx = bouncing_ball(dy, dx, ball_start)
 
                                 # Recalculate ball_idx for current frame
                                 ball_idx = np.where(ids == ball_id)[0]
