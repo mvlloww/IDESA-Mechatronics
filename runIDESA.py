@@ -199,6 +199,110 @@ def get_2d_angle_from_corners(corners):
     angle = np.arctan2(-forward_x, -forward_y)
     return angle
 
+def detect_fire(frame):
+    """
+    Detect large red object in the frame (fire detection).
+    Returns: (is_fire_detected, fire_center_pixel, fire_area)
+    - is_fire_detected: True if large red object found
+    - fire_center_pixel: (x, y) pixel coordinates of fire center, or None
+    - fire_area: area of detected red region in pixels
+    
+    TODO: Adjust HSV ranges and area threshold based on actual fire/red object
+    """
+    # Convert to HSV for color detection
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    
+    # Red color range in HSV (red wraps around, so need two ranges)
+    # TODO: Adjust these values based on actual red object to detect
+    lower_red1 = np.array([0, 120, 70])
+    upper_red1 = np.array([10, 255, 255])
+    lower_red2 = np.array([170, 120, 70])
+    upper_red2 = np.array([180, 255, 255])
+    
+    # Create masks for both red ranges
+    mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+    mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+    mask = mask1 + mask2
+    
+    # Apply morphological operations to clean up the mask
+    kernel = np.ones((5, 5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    
+    # Find contours
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Find the largest red contour
+    min_fire_area = 500  # TODO: Adjust minimum area threshold
+    largest_area = 0
+    fire_center = None
+    
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area > largest_area and area > min_fire_area:
+            largest_area = area
+            M = cv2.moments(contour)
+            if M["m00"] > 0:
+                cx = int(M["m10"] / M["m00"])
+                cy = int(M["m01"] / M["m00"])
+                fire_center = (cx, cy)
+    
+    is_fire = fire_center is not None and largest_area > min_fire_area
+    return is_fire, fire_center, largest_area
+
+def get_turret_forward_direction(corners):
+    """
+    Get the forward direction vector of the turret (north direction of ArUco).
+    Returns unit vector (fx, fy) in pixel coordinates pointing in turret's forward direction.
+    Forward is defined as perpendicular to the top edge, pointing "up" from the marker.
+    """
+    pts = corners.reshape((4, 2))
+    # Vector from top-left to top-right (top edge)
+    top_edge = pts[1] - pts[0]
+    
+    # Forward direction is perpendicular to top edge (90° CCW from top edge in screen coords)
+    # In screen coords (Y down), rotating 90° CCW: (x, y) -> (-y, x)
+    # But we want "up" from marker, which is 90° CW: (x, y) -> (y, -x)
+    forward_x = top_edge[1]
+    forward_y = -top_edge[0]
+    
+    # Normalize to unit vector
+    length = np.sqrt(forward_x**2 + forward_y**2)
+    if length > 0:
+        forward_x /= length
+        forward_y /= length
+    
+    return forward_x, forward_y
+
+def find_closest_target_to_fire(fire_center_pixel, ids, corners, end_points, frame, grid_width, grid_height):
+    """
+    Find which target (1-6) is closest to the detected fire.
+    Returns the marker_id of the closest target.
+    """
+    min_distance = float('inf')
+    closest_target_id = None
+    
+    if ids is None or fire_center_pixel is None:
+        return None
+    
+    img_h, img_w = frame.shape[:2]
+    
+    for i, marker_id in enumerate(ids.flatten()):
+        if marker_id in end_points.keys():  # Only check targets 1-6
+            # Get pixel center of this marker
+            pts = corners[i].reshape((4, 2))
+            center_pixel = pts.mean(axis=0)
+            
+            # Calculate distance to fire
+            dist = np.sqrt((center_pixel[0] - fire_center_pixel[0])**2 + 
+                          (center_pixel[1] - fire_center_pixel[1])**2)
+            
+            if dist < min_distance:
+                min_distance = dist
+                closest_target_id = int(marker_id)
+    
+    return closest_target_id
+
 
 
 ''' Import necessary libraries '''
@@ -298,13 +402,24 @@ IsFire = False
 quit_flag = False
 mode = 'auto'  # can be 'auto' or 'manual'
 
+# Turret/Fire detection variables
+turret_id = 10  # ArUco ID for the turret
+fire_center_pixel = None  # Pixel coords of detected fire
+fire_target_id = None  # Which target (1-6) is closest to fire
+turret_endpoint = None  # Calculated endpoint for turret [y, x] format
+pump_active = False  # Track if pump is currently on
+
 ''' Setup UDP communication '''
-# This is the IP address of the machine that the data will be send to
+# Ball control UDP
 UDP_IP = "138.38.229.206" #clearpass IP address for RPI 3B Model +
-# This is the RENOTE port the machine will reply on (on that machine this is the value for the LOCAL port)
 UDP_PORT = 50000
-sock = socket.socket(socket.AF_INET,    # Family of addresses, in this case IP type 
-                     socket.SOCK_DGRAM) # What protocol to use, in this case UDP (datagram)
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+# Turret pump UDP (separate socket)
+# TODO: Set actual IP and port for turret pump control
+TURRET_UDP_IP = "138.38.229.207"  # Placeholder - update with actual turret IP
+TURRET_UDP_PORT = 50001  # Placeholder - update with actual turret port
+turret_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 # Crop Rotation True/False
 In_range = {}
@@ -323,7 +438,16 @@ while True:
         if not ret or frame is None:
             continue
 
-        ## check IsFire status here##
+        # Check for fire (large red object)
+        is_fire_detected, fire_center_pixel, fire_area = detect_fire(frame)
+        if is_fire_detected:
+            IsFire = True
+            # Draw fire indicator on frame
+            cv2.circle(frame, fire_center_pixel, 20, (0, 0, 255), 3)
+            cv2.putText(frame, "FIRE DETECTED!", (fire_center_pixel[0]-50, fire_center_pixel[1]-30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            print(f"Fire detected at pixel {fire_center_pixel}, area: {fire_area}")
+            break  # Exit to fire handling loop
 
         # Convert the image from the camera to Gray scale
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -756,6 +880,288 @@ while True:
                 end_points = rotate_dict(end_points, k=2)
                 In_range.clear()  # Reset In_range for new endpoint assignments
                 print(f"New endpoints: {end_points}")
+    
+    # ==================== FIRE HANDLING LOOP ====================
+    while IsFire == True and not quit_flag and mode == 'auto':
+        # Capture current frame from the camera
+        ret, frame = cap.read()
+        if not ret or frame is None:
+            continue
+        
+        # Check if fire is still present
+        is_fire_detected, fire_center_pixel, fire_area = detect_fire(frame)
+        
+        if not is_fire_detected:
+            # Fire extinguished - send pump OFF and return to normal mode
+            if pump_active:
+                turret_sock.sendto(b'0', (TURRET_UDP_IP, TURRET_UDP_PORT))
+                pump_active = False
+            print("Fire extinguished! Returning to normal auto mode...")
+            IsFire = False
+            fire_target_id = None
+            turret_endpoint = None
+            pump_active = False
+            break  # Exit fire loop, outer while True will re-enter normal auto loop
+        
+        # Draw fire indicator
+        cv2.circle(frame, fire_center_pixel, 20, (0, 0, 255), 3)
+        cv2.putText(frame, "FIRE MODE!", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        
+        # Convert to grayscale and detect markers
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
+        
+        # Single key poll
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            quit_flag = True
+            break
+        if key == ord('m'):
+            mode = 'manual'
+            IsFire = False  # Exit fire mode if switching to manual
+            break
+        
+        if ids is None or len(ids) == 0:
+            draw_in_range_status(frame, In_range)
+            cv2.imshow('frame-image', frame)
+            continue
+        
+        out = aruco.drawDetectedMarkers(frame, corners, ids)
+        
+        # Find which target is closest to fire (only need to do once or when fire moves)
+        if fire_target_id is None:
+            fire_target_id = find_closest_target_to_fire(fire_center_pixel, ids, corners, end_points, frame, grid_width, grid_height)
+            if fire_target_id is not None:
+                print(f"Fire nearest to target ID {fire_target_id}")
+                # Set turret endpoint to be near the fire target
+                # Get the current position of the fire target as the turret's destination
+                fire_target_idx = np.where(ids == fire_target_id)[0]
+                if fire_target_idx.size > 0:
+                    fire_target_center = get_center(corners[fire_target_idx[0]], frame, grid_width, grid_height)
+                    # Set endpoint slightly offset (you can adjust this offset)
+                    turret_endpoint = [fire_target_center[1], fire_target_center[0]]  # [y, x] format
+                    print(f"Turret endpoint set to: {turret_endpoint}")
+        
+        # Check if turret (ID 10) and ball (ID 8) are visible
+        turret_idx = np.where(ids == turret_id)[0]
+        ball_idx = np.where(ids == ball_id)[0]
+        
+        if turret_idx.size == 0:
+            cv2.putText(frame, "Turret (ID 10) not found!", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
+            draw_in_range_status(frame, In_range)
+            cv2.imshow('frame-image', frame)
+            continue
+        
+        if ball_idx.size == 0 and ball_last_center is None:
+            cv2.putText(frame, "Ball not found!", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
+            draw_in_range_status(frame, In_range)
+            cv2.imshow('frame-image', frame)
+            continue
+        
+        # Get turret position and orientation
+        turret_center = get_center(corners[turret_idx[0]], frame, grid_width, grid_height)  # (x, y)
+        turret_forward_x, turret_forward_y = get_turret_forward_direction(corners[turret_idx[0]])
+        turret_yaw = get_2d_angle_from_corners(corners[turret_idx[0]])
+        
+        # Get ball position (use cached if not visible)
+        if ball_idx.size > 0:
+            ball_center = get_center(corners[ball_idx[0]], frame, grid_width, grid_height)
+            ball_last_center = ball_center
+            ball_last_corners = corners[ball_idx[0]].copy()
+            ball_missing_frames = 0
+        elif ball_last_center is not None and ball_missing_frames < ball_max_missing:
+            ball_center = ball_last_center
+            ball_missing_frames += 1
+        else:
+            draw_in_range_status(frame, In_range)
+            cv2.imshow('frame-image', frame)
+            continue
+        
+        # Reset grid and add obstacles (all targets 1-6 are obstacles in fire mode)
+        grid.fill(1)
+        for t in range(len(ids)):
+            m_id = int(ids[t][0])
+            if m_id in end_points.keys():  # Targets 1-6 are obstacles
+                m_center = get_center(corners[t], frame, grid_width, grid_height)
+                mask = (x_coords - m_center[0])**2 + (y_coords - m_center[1])**2 <= radius**2
+                grid[mask] = 0
+        
+        # Get image dimensions for coordinate conversion
+        img_h, img_w = frame.shape[:2]
+        
+        # Convert fire pixel position to grid coordinates
+        fire_grid_x = int(fire_center_pixel[0] / img_w * grid_width)
+        fire_grid_y = int(fire_center_pixel[1] / img_h * grid_height)
+        fire_grid_pos = (fire_grid_x, fire_grid_y)
+        
+        # ===== TURRET PATHFINDING TO FIRE =====
+        # Calculate path from turret to fire position
+        turret_start = (max(0, min(grid_height-1, int(turret_center[1]))), 
+                        max(0, min(grid_width-1, int(turret_center[0]))))  # (row, col) format
+        fire_end = (max(0, min(grid_height-1, fire_grid_y)), 
+                    max(0, min(grid_width-1, fire_grid_x)))  # (row, col) format
+        
+        path_turret2fire = tcod.path.path2d(cost=grid, start_points=[turret_start], end_points=[fire_end], cardinal=10, diagonal=14)
+        
+        # Get the direction turret needs to move (from path)
+        if len(path_turret2fire) >= 2:
+            _, turret_path_simplified = simplify_path(path_turret2fire)
+            
+            if len(turret_path_simplified) >= 2:
+                # Direction from turret to next waypoint in path
+                path_dy = turret_path_simplified[1][0] - turret_center[1]  # row direction
+                path_dx = turret_path_simplified[1][1] - turret_center[0]  # col direction
+                
+                # Normalize the path direction
+                path_length = np.sqrt(path_dx**2 + path_dy**2)
+                if path_length > 0:
+                    path_dir_x = path_dx / path_length
+                    path_dir_y = path_dy / path_length
+                else:
+                    path_dir_x, path_dir_y = 0, 0
+            else:
+                # Fallback: direct direction to fire
+                path_dx = fire_grid_x - turret_center[0]
+                path_dy = fire_grid_y - turret_center[1]
+                path_length = np.sqrt(path_dx**2 + path_dy**2)
+                if path_length > 0:
+                    path_dir_x = path_dx / path_length
+                    path_dir_y = path_dy / path_length
+                else:
+                    path_dir_x, path_dir_y = 0, 0
+        else:
+            # No path found, use direct direction to fire
+            path_dx = fire_grid_x - turret_center[0]
+            path_dy = fire_grid_y - turret_center[1]
+            path_length = np.sqrt(path_dx**2 + path_dy**2)
+            if path_length > 0:
+                path_dir_x = path_dx / path_length
+                path_dir_y = path_dy / path_length
+            else:
+                path_dir_x, path_dir_y = 0, 0
+            turret_path_simplified = []
+        
+        # Check distance from turret to fire
+        dist_to_fire = np.sqrt((turret_center[0] - fire_grid_x)**2 + (turret_center[1] - fire_grid_y)**2)
+        
+        if dist_to_fire <= 3:  # Turret close enough to fire
+            # Check if turret is facing the fire
+            angle_to_fire = np.arctan2(fire_grid_y - turret_center[1], fire_grid_x - turret_center[0])
+            turret_facing_angle = -turret_yaw + np.pi/2  # Convert to standard angle
+            
+            angle_diff = abs(angle_to_fire - turret_facing_angle)
+            angle_diff = min(angle_diff, 2*np.pi - angle_diff)  # Handle wrap-around
+            
+            if angle_diff < 0.5:  # Within ~30 degrees tolerance
+                # Turret in position and facing fire - activate pump!
+                if not pump_active:
+                    turret_sock.sendto(b'1', (TURRET_UDP_IP, TURRET_UDP_PORT))
+                    pump_active = True
+                    print("Turret in position and aimed! Pump ON!")
+                cv2.putText(frame, "PUMP ACTIVE!", (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            else:
+                cv2.putText(frame, f"Aiming... ({np.degrees(angle_diff):.1f} deg off)", (10, 180), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        else:
+            cv2.putText(frame, f"Moving to fire... (dist: {dist_to_fire:.1f})", (10, 180),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        
+        # ===== BALL PATHFINDING (push turret along path direction) =====
+        # Place fake target BEHIND the turret (opposite to path direction)
+        # This makes the ball push the turret in the path direction
+        # AND aligns the turret's forward with the movement direction
+        push_distance = 3
+        fake_target_x = turret_center[0] - push_distance * path_dir_x
+        fake_target_y = turret_center[1] - push_distance * path_dir_y
+        fake_target = (fake_target_x, fake_target_y)
+        
+        # Pathfinding: ball to fake target (behind turret relative to path)
+        bs = (max(0, min(grid_height-1, int(ball_center[1]))), max(0, min(grid_width-1, int(ball_center[0]))))
+        ts = (max(0, min(grid_height-1, int(fake_target[1]))), max(0, min(grid_width-1, int(fake_target[0]))))
+        
+        path_b2t = tcod.path.path2d(cost=grid, start_points=[bs], end_points=[ts], cardinal=10, diagonal=14)
+        
+        if len(path_b2t) > 0:
+            _, diagonaldown_path = simplify_path(path_b2t)
+            
+            if len(diagonaldown_path) >= 2:
+                dy = diagonaldown_path[1][0] - ball_center[1]
+                dx = diagonaldown_path[1][1] - ball_center[0]
+                
+                # Get ball yaw for sending
+                if ball_idx.size > 0:
+                    ball_yaw = get_2d_angle_from_corners(corners[ball_idx[0]])
+                elif ball_last_corners is not None:
+                    ball_yaw = get_2d_angle_from_corners(ball_last_corners)
+                else:
+                    ball_yaw = 0
+                
+                # Calculate angle from ball to turret
+                angle_b2t = np.arctan2(turret_center[1] - ball_center[1], turret_center[0] - ball_center[0])
+                
+                # Send UDP command to ball
+                next_target = np.array([dy, dx, compute_theta_send(ball_yaw), angle_b2t])
+                sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
+                print(f"Fire mode - message: {next_target}")
+        
+        # Visualization
+        img_h, img_w = frame.shape[:2]
+        
+        # Draw grid
+        for i in range(grid_height + 1):
+            y = int(round(i * img_h / grid_height))
+            cv2.line(frame, (0, y), (img_w, y), (100, 100, 100), 1)
+        for j in range(grid_width + 1):
+            x = int(round(j * img_w / grid_width))
+            cv2.line(frame, (x, 0), (x, img_h), (100, 100, 100), 1)
+        
+        # Draw turret path to fire (red dashed line effect)
+        if len(turret_path_simplified) >= 1:
+            turret_path_pixels = []
+            for point in turret_path_simplified:
+                x_pixel = int(point[1] * img_w / grid_width)
+                y_pixel = int(point[0] * img_h / grid_height)
+                turret_path_pixels.append([x_pixel, y_pixel])
+            turret_path_pixels = np.array(turret_path_pixels, dtype=np.int32)
+            cv2.polylines(frame, [turret_path_pixels], False, color=(0, 0, 255), thickness=3)  # Red for turret path
+        
+        # Draw ball path to fake target (orange)
+        if len(path_b2t) > 0 and len(diagonaldown_path) >= 1:
+            path_pixels = []
+            for point in diagonaldown_path:
+                x_pixel = int(point[1] * img_w / grid_width)
+                y_pixel = int(point[0] * img_h / grid_height)
+                path_pixels.append([x_pixel, y_pixel])
+            path_pixels = np.array(path_pixels, dtype=np.int32)
+            cv2.polylines(frame, [path_pixels], False, color=(255, 128, 0), thickness=2)  # Orange for ball path
+        
+        # Draw markers
+        ball_pixel = (int(ball_center[0] * img_w / grid_width), int(ball_center[1] * img_h / grid_height))
+        turret_pixel = (int(turret_center[0] * img_w / grid_width), int(turret_center[1] * img_h / grid_height))
+        fake_pixel = (int(fake_target[0] * img_w / grid_width), int(fake_target[1] * img_h / grid_height))
+        fire_pixel = (int(fire_grid_x * img_w / grid_width), int(fire_grid_y * img_h / grid_height))
+        
+        cv2.drawMarker(frame, ball_pixel, (0, 255, 0), cv2.MARKER_TILTED_CROSS, 40, 2)
+        cv2.drawMarker(frame, turret_pixel, (0, 128, 255), cv2.MARKER_STAR, 50, 2)  # Orange star for turret
+        cv2.drawMarker(frame, fake_pixel, (255, 0, 255), cv2.MARKER_DIAMOND, 40, 2)  # Magenta for ball's fake target
+        cv2.drawMarker(frame, fire_pixel, (0, 0, 255), cv2.MARKER_CROSS, 60, 3)  # Red cross at fire
+        cv2.putText(frame, "FIRE", (fire_pixel[0]+10, fire_pixel[1]-10), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        
+        # Draw turret forward direction arrow
+        arrow_length = 50
+        arrow_end = (int(turret_pixel[0] + arrow_length * turret_forward_x),
+                    int(turret_pixel[1] + arrow_length * turret_forward_y))
+        cv2.arrowedLine(frame, turret_pixel, arrow_end, (0, 128, 255), 3, tipLength=0.3)
+        
+        # Draw path direction arrow (cyan - shows which way turret should move)
+        path_arrow_end = (int(turret_pixel[0] + arrow_length * path_dir_x),
+                         int(turret_pixel[1] + arrow_length * path_dir_y))
+        cv2.arrowedLine(frame, turret_pixel, path_arrow_end, (255, 255, 0), 2, tipLength=0.3)
+        
+        draw_in_range_status(frame, In_range)
+        cv2.imshow('frame-image', frame)
+    # ==================== END FIRE HANDLING LOOP ====================
         
     while mode == 'manual' and not quit_flag:
         
