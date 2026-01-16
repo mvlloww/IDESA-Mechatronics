@@ -193,8 +193,8 @@ y_coords, x_coords = np.ogrid[:grid_height, :grid_width]
 radius = 1.5
 
 # Set target end points for pathfinding (can be changed later)
-end_points = {1:[5,35], 4:[15,10]}
-#end_points = {1:[5,10], 2:[5,35], 3:[10,10], 4:[10,35], 5:[15,10], 6:[15,35]}
+#end_points = {1:[5,35], 4:[15,10]}
+end_points = {1:[16,6], 2:[16,10], 3:[4,16], 4:[4,24], 5:[16,32], 6:[16,36]}
 # Set ball ArUco id
 ball_id = 8
 # Create id_buffer dictionary
@@ -218,9 +218,17 @@ In_range = {}
 
 ''' Main loop '''
 while True:
+
     # Start the performance clock
     start = time.perf_counter()
     quit_flag = False
+
+    # --- Fixed interval UDP sending setup ---
+    UDP_HZ = 30  # Target frequency in Hz
+    UDP_INTERVAL = 1.0 / UDP_HZ
+    last_udp_send_time = time.perf_counter()
+    udp_packet_ready = None  # Store the latest UDP packet to send
+    udp_packet_debug = None  # For debug print
 
     while IsFire == False and not quit_flag and mode == 'auto':
         # Capture current frame from the camera
@@ -411,10 +419,10 @@ while True:
                                         rotate_vec = rvecs[ball_idx[0]][0]
                                         R, _ = cv2.Rodrigues(rvecs[ball_idx[0]][0])
                                         yaw = np.arctan2(R[1, 0], R[0, 0])
-                                        # UDP sending
-                                        next_target = np.array([dy, dx,compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
-                                        sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
-                                        print ("9. message:", next_target)
+                                        # Prepare UDP packet (store latest)
+                                        next_target = np.array([dy, dx,compute_theta_send(yaw), angle_b2t])
+                                        udp_packet_ready = struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2]))
+                                        udp_packet_debug = next_target
                                 # Convert grid coordinates to pixel coordinates
                                 img_h, img_w = frame.shape[:2]
                                 
@@ -475,10 +483,10 @@ while True:
                                     R, _ = cv2.Rodrigues(rvecs[ball_idx[0]][0])
                                     yaw = np.arctan2(R[1, 0], R[0, 0])
 
-                                    # UDP sending
-                                    next_target = np.array([dy, dx, compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
-                                    sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
-                                    print ("13. message:", next_target)
+                                    # Prepare UDP packet (store latest)
+                                    next_target = np.array([dy, dx, compute_theta_send(yaw), angle_b2t])
+                                    udp_packet_ready = struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2]))
+                                    udp_packet_debug = next_target
 
                                 # Convert path from grid to pixel coordinates
                                 img_h, img_w = frame.shape[:2]
@@ -524,7 +532,18 @@ while True:
                     break
 
             # Crop rotation
-            if In_range.get(keys)==True:
+            # if In_range.get(keys)==True:
+            #     end_points = rotate_dict(end_points, k=2)
+
+            # Final check for all targets reached - rotate if so
+            if len(In_range) == 6 and all(In_range.get(k, False) for k in end_points.keys()):
+                # --- Fixed interval UDP sending ---
+                now = time.perf_counter()
+                if udp_packet_ready is not None and (now - last_udp_send_time) >= UDP_INTERVAL:
+                    sock.sendto(udp_packet_ready, (UDP_IP, UDP_PORT))
+                    print("[UDP] Sent packet:", udp_packet_debug)
+                    last_udp_send_time = now
+                    udp_packet_ready = None
                 end_points = rotate_dict(end_points, k=2)
         
     while mode == 'manual' and not quit_flag:
@@ -558,14 +577,14 @@ while True:
             
         elif key == ord('a'):
             print ('direction = left')
-            next_target = np.array([0, -50, compute_theta_send(yaw), 0])
+            next_target = np.array([0, 50, compute_theta_send(yaw), 0])
         elif key == ord('s'):
             print ('direction = down')
             next_target = np.array([-50, 0, compute_theta_send(yaw), 0])
 
         elif key == ord('d'):
             print ('direction = right')
-            next_target = np.array([0, 50, compute_theta_send(yaw), 0])
+            next_target = np.array([0, -50, compute_theta_send(yaw), 0])
         elif key == ord('q'):
             quit_flag = True
             break
