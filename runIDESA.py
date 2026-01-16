@@ -194,7 +194,7 @@ radius = 1.5
 
 # Set target end points for pathfinding (can be changed later)
 #end_points = {1:[15,10], 2:[15,35], 3:[12,39], 4:[5,10]}
-end_points = {1:[15,10]}
+end_points = {1:[15,10], 4:[5,10]}
 # Set ball ArUco id
 ball_id = 8
 # Create id_buffer dictionary
@@ -411,12 +411,22 @@ while True:
                                 #     fake_target = target_start
                                 #     #print ("5. Path too short, using target position as fake target: ", fake_target)
 
-                                # Get fake target position for ball to target pathfinding
-                                # Check if path_t2e has at least 2 points
-                                fdy = 1+(target_start[1] - path_t2e[1][0])
-                                fdx = 1+(target_start[0] - path_t2e[1][1])
-                                fake_target = (target_start[0] + fdx, target_start[1] + fdy)
-                                #print ("5. Fake target for ball to target pathfinding: ", fake_target)
+                                # # Get fake target position for ball to target pathfinding
+                                # # Check if path_t2e has at least 2 points
+                                # fdy = 1+(target_start[1] - path_t2e[1][0])
+                                # fdx = 1+(target_start[0] - path_t2e[1][1])
+                                # fake_target = (target_start[0] + fdx, target_start[1] + fdy)
+                                # #print ("5. Fake target for ball to target pathfinding: ", fake_target)
+
+                                if len(path_t2e) >= 2:
+                                    # Vector from target to endpoint
+                                    vec_t2e = (path_t2e[1][1] - target_start[0], path_t2e[1][0] - target_start[1])
+                                    # Place fake target opposite the endpoint, at a certain distance
+                                    push_distance = 2  # adjust as needed
+                                    fake_target = (target_start[0] - push_distance * vec_t2e[0], target_start[1] - push_distance * vec_t2e[1])
+                                else:
+                                    # Path too short, use target position
+                                    fake_target = target_start
                                 
                                 # pathfinding ball to fake target
                                 bs = (int(ball_start[1]), int(ball_start[0]))
