@@ -152,6 +152,32 @@ def bouncing_ball(dy, dx, ball_start):
     #     dy = -9
     return dy, dx
 
+def get_2d_angle_from_corners(corners):
+    """
+    Calculate 2D rotation angle from ArUco marker corners.
+    Corners are ordered: [top-left, top-right, bottom-right, bottom-left]
+    
+    Coordinate system:
+    - 0° = marker's forward direction pointing UP the screen (negative Y)
+    - Positive theta = clockwise rotation from up
+    - Negative theta = anticlockwise rotation from up
+    
+    This ignores tilt and pitch, only measuring in-plane rotation.
+    """
+    pts = corners.reshape((4, 2))
+    # Vector from top-left to top-right (top edge)
+    top_edge = pts[1] - pts[0]
+    
+    # Forward direction is perpendicular to top edge (90° CW from top edge)
+    # When marker is upright, top edge points right, forward points up
+    forward_x = top_edge[1]   # rotated 90° CW: [y, -x]
+    forward_y = -top_edge[0]
+    
+    # Calculate angle from screen-up (negative Y axis), with CW positive
+    # atan2(x, -y) gives angle from Y- axis with CW positive in image coords
+    angle = np.arctan2(forward_x, -forward_y)
+    return angle
+
 
 
 ''' Import necessary libraries '''
@@ -193,7 +219,7 @@ aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
 parameters = aruco.DetectorParameters()
 
 # CAP_DSHOW to make sure it uses DirectShow backend on Windows (more stable)
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(1)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 2750)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
 
@@ -437,13 +463,32 @@ while True:
                                     # Recalculate ball_idx for current frame
                                     ball_idx = np.where(ids == ball_id)[0]
                                     if ball_idx.size > 0:
-                                        rotate_vec = rvecs[ball_idx[0]][0]
-                                        R, _ = cv2.Rodrigues(rvecs[ball_idx[0]][0])
-                                        yaw = np.arctan2(R[1, 0], R[0, 0])
+                                        # Use 2D corner-based angle (ignores tilt/pitch)
+                                        yaw = get_2d_angle_from_corners(corners[ball_idx[0]])
                                         # UDP sending
                                         next_target = np.array([dy, dx,compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
                                         sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
                                         print ("9. message:", next_target)
+                                        
+                                        # Visualize theta (2D angle) on frame
+                                        theta_deg = np.degrees(yaw)
+                                        theta_send_deg = np.degrees(compute_theta_send(yaw))
+                                        # Get ball center in pixels for visualization
+                                        ball_corners = corners[ball_idx[0]].reshape((4, 2))
+                                        ball_center_px = ball_corners.mean(axis=0).astype(int)
+                                        # Draw arrow showing marker's forward direction
+                                        # Arrow points UP when theta=0, rotates CW for positive theta
+                                        arrow_length = 60
+                                        # Convert from our angle system (0=up, CW+) to image coords for drawing
+                                        # In image: up is -Y, so we use sin for X and -cos for Y
+                                        arrow_end = (int(ball_center_px[0] + arrow_length * np.sin(yaw)),
+                                                     int(ball_center_px[1] - arrow_length * np.cos(yaw)))
+                                        cv2.arrowedLine(frame, tuple(ball_center_px), arrow_end, (0, 255, 255), 3, tipLength=0.3)
+                                        # Display theta text
+                                        cv2.putText(frame, f"Theta: {theta_deg:.1f} deg", (10, 30), 
+                                                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                                        cv2.putText(frame, f"Theta_send: {theta_send_deg:.1f} deg", (10, 60), 
+                                                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
                                 # Convert grid coordinates to pixel coordinates
                                 img_h, img_w = frame.shape[:2]
                                 
@@ -501,14 +546,33 @@ while True:
                                 # Recalculate ball_idx for current frame
                                 ball_idx = np.where(ids == ball_id)[0]
                                 if ball_idx.size > 0:
-                                    rotate_vec = rvecs[ball_idx[0]][0]
-                                    R, _ = cv2.Rodrigues(rvecs[ball_idx[0]][0])
-                                    yaw = np.arctan2(R[1, 0], R[0, 0])
+                                    # Use 2D corner-based angle (ignores tilt/pitch)
+                                    yaw = get_2d_angle_from_corners(corners[ball_idx[0]])
 
                                     # UDP sending
                                     next_target = np.array([dy, dx, compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
                                     sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
                                     print ("13. message:", next_target)
+                                    
+                                    # Visualize theta (2D angle) on frame
+                                    theta_deg = np.degrees(yaw)
+                                    theta_send_deg = np.degrees(compute_theta_send(yaw))
+                                    # Get ball center in pixels for visualization
+                                    ball_corners = corners[ball_idx[0]].reshape((4, 2))
+                                    ball_center_px = ball_corners.mean(axis=0).astype(int)
+                                    # Draw arrow showing marker's forward direction
+                                    # Arrow points UP when theta=0, rotates CW for positive theta
+                                    arrow_length = 60
+                                    # Convert from our angle system (0=up, CW+) to image coords for drawing
+                                    # In image: up is -Y, so we use sin for X and -cos for Y
+                                    arrow_end = (int(ball_center_px[0] + arrow_length * np.sin(yaw)),
+                                                 int(ball_center_px[1] - arrow_length * np.cos(yaw)))
+                                    cv2.arrowedLine(frame, tuple(ball_center_px), arrow_end, (0, 255, 255), 3, tipLength=0.3)
+                                    # Display theta text
+                                    cv2.putText(frame, f"Theta: {theta_deg:.1f} deg", (10, 30), 
+                                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                                    cv2.putText(frame, f"Theta_send: {theta_send_deg:.1f} deg", (10, 60), 
+                                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
 
                                 # Convert path from grid to pixel coordinates
                                 img_h, img_w = frame.shape[:2]
