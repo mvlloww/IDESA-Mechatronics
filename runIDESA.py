@@ -218,17 +218,9 @@ In_range = {}
 
 ''' Main loop '''
 while True:
-
     # Start the performance clock
     start = time.perf_counter()
     quit_flag = False
-
-    # --- Fixed interval UDP sending setup ---
-    UDP_HZ = 30  # Target frequency in Hz
-    UDP_INTERVAL = 1.0 / UDP_HZ
-    last_udp_send_time = time.perf_counter()
-    udp_packet_ready = None  # Store the latest UDP packet to send
-    udp_packet_debug = None  # For debug print
 
     while IsFire == False and not quit_flag and mode == 'auto':
         # Capture current frame from the camera
@@ -366,9 +358,10 @@ while True:
                             target_start = center_key
 
                             # pathfinding target to end point
-                            ts = (int(target_start[1]), int(target_start[0])) # (x,y) -> (y,x) format
+                            # Clip coordinates to grid bounds
+                            ts = (max(0, min(grid_height-1, int(target_start[1]))), max(0, min(grid_width-1, int(target_start[0])))) # (x,y) -> (y,x) format
                             endpoint_xy = get_endpoint_xy(end_points.get(keys))
-                            ep = (int(endpoint_xy[0]), int(endpoint_xy[1])) # (x,y) format
+                            ep = (max(0, min(grid_height-1, int(endpoint_xy[1]))), max(0, min(grid_width-1, int(endpoint_xy[0])))) # (x,y) format
                             path_t2e = tcod.path.path2d(cost=grid, start_points=[ts], end_points=[ep], cardinal=10, diagonal=14)
                             
                             ballTarget_distance = 2
@@ -397,8 +390,9 @@ while True:
                                     fake_target = target_start
                                 
                                 # pathfinding ball to fake target
-                                bs = (int(ball_start[1]), int(ball_start[0]))
-                                ts = (int(fake_target[1]), int(fake_target[0]))
+                                # Clip coordinates to grid bounds
+                                bs = (max(0, min(grid_height-1, int(ball_start[1]))), max(0, min(grid_width-1, int(ball_start[0]))))
+                                ts = (max(0, min(grid_height-1, int(fake_target[1]))), max(0, min(grid_width-1, int(fake_target[0]))))
                                 path_b2t = tcod.path.path2d(cost=grid, start_points=[bs], end_points=[ts], cardinal=10, diagonal=14)
                                 # tcod can return an empty array; guard simplify_path
                                 if len(path_b2t) > 0:
@@ -419,10 +413,10 @@ while True:
                                         rotate_vec = rvecs[ball_idx[0]][0]
                                         R, _ = cv2.Rodrigues(rvecs[ball_idx[0]][0])
                                         yaw = np.arctan2(R[1, 0], R[0, 0])
-                                        # Prepare UDP packet (store latest)
-                                        next_target = np.array([dy, dx,compute_theta_send(yaw), angle_b2t])
-                                        udp_packet_ready = struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2]))
-                                        udp_packet_debug = next_target
+                                        # UDP sending
+                                        next_target = np.array([dy, dx,compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
+                                        sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
+                                        print ("9. message:", next_target)
                                 # Convert grid coordinates to pixel coordinates
                                 img_h, img_w = frame.shape[:2]
                                 
@@ -483,10 +477,10 @@ while True:
                                     R, _ = cv2.Rodrigues(rvecs[ball_idx[0]][0])
                                     yaw = np.arctan2(R[1, 0], R[0, 0])
 
-                                    # Prepare UDP packet (store latest)
-                                    next_target = np.array([dy, dx, compute_theta_send(yaw), angle_b2t])
-                                    udp_packet_ready = struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2]))
-                                    udp_packet_debug = next_target
+                                    # UDP sending
+                                    next_target = np.array([dy, dx, compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
+                                    sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
+                                    print ("13. message:", next_target)
 
                                 # Convert path from grid to pixel coordinates
                                 img_h, img_w = frame.shape[:2]
@@ -537,13 +531,6 @@ while True:
 
             # Final check for all targets reached - rotate if so
             if len(In_range) == 6 and all(In_range.get(k, False) for k in end_points.keys()):
-                # --- Fixed interval UDP sending ---
-                now = time.perf_counter()
-                if udp_packet_ready is not None and (now - last_udp_send_time) >= UDP_INTERVAL:
-                    sock.sendto(udp_packet_ready, (UDP_IP, UDP_PORT))
-                    print("[UDP] Sent packet:", udp_packet_debug)
-                    last_udp_send_time = now
-                    udp_packet_ready = None
                 end_points = rotate_dict(end_points, k=2)
         
     while mode == 'manual' and not quit_flag:
