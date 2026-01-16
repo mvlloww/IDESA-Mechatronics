@@ -19,8 +19,8 @@ def detect_red_led(frame, lower_red1, upper_red1, lower_red2, upper_red2):
         return True, mask
     return False, mask
 
-# Main loop
-cap = cv2.VideoCapture(1)
+# Main loop - change video source as needed (either 0 or 1)
+cap = cv2.VideoCapture(0)
 
 # Create window and trackbars
 cv2.namedWindow('Red LED Detection')
