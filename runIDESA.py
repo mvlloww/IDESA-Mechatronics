@@ -119,6 +119,11 @@ def grid_obstacle(ids, corners, target_id, x_coords, y_coords, grid, radius, fra
             oy_pixel = int(oy * img_h / grid_height)
             radius_pixel = int(radius * img_w / grid_width)
             cv2.circle(frame, (ox_pixel, oy_pixel), radius_pixel, (0,0,255), 2)
+        # Enforce boundary: x=1,39 and y=1,19 to zeros
+        grid[0, :] = 0         # y=1 (row 0)
+        grid[-1, :] = 0        # y=19 (row 19)
+        grid[:, 0] = 0         # x=1 (col 0)
+        grid[:, -1] = 0        # x=39 (col 39)
     return grid
 def rotate_dict(d, k=2):
     items = list(d.items())
