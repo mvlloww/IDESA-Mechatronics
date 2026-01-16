@@ -168,7 +168,7 @@ aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
 parameters = aruco.DetectorParameters()
 
 # CAP_DSHOW to make sure it uses DirectShow backend on Windows (more stable)
-cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
+cap = cv2.VideoCapture(0)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 2750)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
 
@@ -193,7 +193,8 @@ y_coords, x_coords = np.ogrid[:grid_height, :grid_width]
 radius = 1.5
 
 # Set target end points for pathfinding (can be changed later)
-end_points = {1:[[15,10],False], 2:[[15,35],False], 3:[[12,39],False], 4:[[5,10],False]}
+#end_points = {1:[15,10], 2:[15,35], 3:[12,39], 4:[5,10]}
+end_points = {1:[15,10]}
 # Set ball ArUco id
 ball_id = 8
 # Create id_buffer dictionary
@@ -212,8 +213,8 @@ UDP_PORT = 50000
 sock = socket.socket(socket.AF_INET,    # Family of addresses, in this case IP type 
                      socket.SOCK_DGRAM) # What protocol to use, in this case UDP (datagram)
 
+# Crop Rotation True/False
 In_range = {}
-pushing_target_id = 1
 
 ''' Main loop '''
 while True:
@@ -352,7 +353,8 @@ while True:
                         rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, marker_size, CM, dist_coef)
                         center_key = get_center(corners[np.where(ids==keys)[0][0]], frame, grid_width, grid_height)
                         center_ball = get_center(corners[np.where(ids==ball_id)[0][0]], frame, grid_width, grid_height)
-                        
+                        # Print grid positions of ball and target
+                        print(f"Ball (ID {ball_id}) grid position: {center_ball}, Target (ID {keys}) grid position: {center_key}")
                         # Get angle of ball to target
                         angle_b2t = np.arctan2(center_key[1]-center_ball[1], center_key[0]-center_ball[0])
                         
@@ -382,8 +384,9 @@ while True:
                             ep = (int(endpoint_xy[0]), int(endpoint_xy[1])) # (x,y) format
                             path_t2e = tcod.path.path2d(cost=grid, start_points=[ts], end_points=[ep], cardinal=10, diagonal=14)
                             
+                            ballTarget_distance = 2
 
-                            if abs(ball_start[0] - target_start[0]) > 2 and abs(ball_start[1] - target_start[1]) > 2:
+                            if abs(ball_start[0] - target_start[0]) > ballTarget_distance or abs(ball_start[1] - target_start[1]) > ballTarget_distance:
                                 # Set target to obstacle
                                 mask = (x_coords - target_start[0])**2 + (y_coords - target_start[1])**2 <= radius**2
                                 grid[mask] = 0
@@ -396,17 +399,24 @@ while True:
                                 cv2.circle(frame, (ox_pixel, oy_pixel), radius_pixel, (0,0,255), 2)
                             
 
+                                # # Get fake target position for ball to target pathfinding
+                                # # Check if path_t2e has at least 2 points
+                                # if len(path_t2e) >= 2:
+                                #     fdy = 0.5*(target_start[1] - path_t2e[1][0])
+                                #     fdx = 0.5*(target_start[0] - path_t2e[1][1])
+                                #     fake_target = (target_start[0] + fdx, target_start[1] + fdy)
+                                #     #print ("5. Fake target for ball to target pathfinding: ", fake_target)
+                                # else:
+                                #     # Path too short, use target position directly
+                                #     fake_target = target_start
+                                #     #print ("5. Path too short, using target position as fake target: ", fake_target)
+
                                 # Get fake target position for ball to target pathfinding
                                 # Check if path_t2e has at least 2 points
-                                if len(path_t2e) >= 2:
-                                    fdy = 0.5*(target_start[1] - path_t2e[1][0])
-                                    fdx = 0.5*(target_start[0] - path_t2e[1][1])
-                                    fake_target = (target_start[0] + fdx, target_start[1] + fdy)
-                                    #print ("5. Fake target for ball to target pathfinding: ", fake_target)
-                                else:
-                                    # Path too short, use target position directly
-                                    fake_target = target_start
-                                    #print ("5. Path too short, using target position as fake target: ", fake_target)
+                                fdy = 1+(target_start[1] - path_t2e[1][0])
+                                fdx = 1+(target_start[0] - path_t2e[1][1])
+                                fake_target = (target_start[0] + fdx, target_start[1] + fdy)
+                                #print ("5. Fake target for ball to target pathfinding: ", fake_target)
                                 
                                 # pathfinding ball to fake target
                                 bs = (int(ball_start[1]), int(ball_start[0]))
@@ -423,7 +433,7 @@ while True:
                                 if len(diagonaldown_path_b2t) > 0:
                                     # convert to dx, dy instructions for UDP sending
                                     dy = ball_start[1]-diagonaldown_path_b2t[1][0]
-                                    dx = ball_start[0]-diagonaldown_path_b2t[1][1]
+                                    dx = diagonaldown_path_b2t[1][1] - ball_start[0]
                                     #print ('7. dx, dy:', dx, dy, ball_start, diagonaldown_path_b2t[1])
 
                                     # Recalculate ball_idx for current frame
@@ -476,7 +486,7 @@ while True:
                                 cv2.drawMarker(frame, target_pixel, (0,0,255), cv2.MARKER_TILTED_CROSS, 40, 2)
                                 cv2.drawMarker(frame, fake_pixel, (255,0,255), cv2.MARKER_DIAMOND, 40, 2)
                                 for k in end_points.keys():
-                                    ep_coords = end_points.get(k)[0]
+                                    ep_coords = end_points.get(k)
                                     ep_pixel = (int(ep_coords[1] * img_w / grid_width), int(ep_coords[0] * img_h / grid_height))
                                     cv2.drawMarker(frame, ep_pixel, (255,255,0), cv2.MARKER_DIAMOND, 40, 2)
                                 
@@ -498,7 +508,7 @@ while True:
                                     continue
                                 
                                 dy = target_start[1]-diagonaldown_path_t2e[1][0]
-                                dx = target_start[0]-diagonaldown_path_t2e[1][1]
+                                dx = diagonaldown_path_t2e[1][1] - target_start[0]
                                 #print ('11. dx, dy:', dx, dy, target_start, diagonaldown_path_t2e[1])
 
                                 # Recalculate ball_idx for current frame
@@ -542,7 +552,7 @@ while True:
                                 ball_pixel = (int(center_ball[0] * img_w / grid_width), int(center_ball[1] * img_h / grid_height))
                                 target_pixel = (int(target_start[0] * img_w / grid_width), int(target_start[1] * img_h / grid_height))
                                 for k in end_points.keys():
-                                    ep_coords = end_points.get(k)[0]
+                                    ep_coords = end_points.get(k)
                                     ep_pixel = (int(ep_coords[1] * img_w / grid_width), int(ep_coords[0] * img_h / grid_height))
                                     cv2.drawMarker(frame, ep_pixel, (255,255,0), cv2.MARKER_DIAMOND, 40, 2)
 
