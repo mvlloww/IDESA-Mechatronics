@@ -475,15 +475,16 @@ while True:
                                         theta_send_deg = np.degrees(compute_theta_send(yaw))
                                         # Get ball center in pixels for visualization
                                         ball_corners = corners[ball_idx[0]].reshape((4, 2))
-                                        ball_center_px = ball_corners.mean(axis=0).astype(int)
+                                        ball_center_px = ball_corners.mean(axis=0)
                                         # Draw arrow showing marker's forward direction
                                         # Arrow points UP when theta=0, rotates CW for positive theta
                                         arrow_length = 60
                                         # Convert from our angle system (0=up, CW+) to image coords for drawing
                                         # In image: up is -Y, so we use sin for X and -cos for Y
+                                        arrow_start = (int(ball_center_px[0]), int(ball_center_px[1]))
                                         arrow_end = (int(ball_center_px[0] + arrow_length * np.sin(yaw)),
                                                      int(ball_center_px[1] - arrow_length * np.cos(yaw)))
-                                        cv2.arrowedLine(frame, tuple(ball_center_px), arrow_end, (0, 255, 255), 3, tipLength=0.3)
+                                        cv2.arrowedLine(frame, arrow_start, arrow_end, (0, 255, 255), 3, tipLength=0.3)
                                         # Display theta text
                                         cv2.putText(frame, f"Theta: {theta_deg:.1f} deg", (10, 30), 
                                                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
@@ -559,15 +560,16 @@ while True:
                                     theta_send_deg = np.degrees(compute_theta_send(yaw))
                                     # Get ball center in pixels for visualization
                                     ball_corners = corners[ball_idx[0]].reshape((4, 2))
-                                    ball_center_px = ball_corners.mean(axis=0).astype(int)
+                                    ball_center_px = ball_corners.mean(axis=0)
                                     # Draw arrow showing marker's forward direction
                                     # Arrow points UP when theta=0, rotates CW for positive theta
                                     arrow_length = 60
                                     # Convert from our angle system (0=up, CW+) to image coords for drawing
                                     # In image: up is -Y, so we use sin for X and -cos for Y
+                                    arrow_start = (int(ball_center_px[0]), int(ball_center_px[1]))
                                     arrow_end = (int(ball_center_px[0] + arrow_length * np.sin(yaw)),
                                                  int(ball_center_px[1] - arrow_length * np.cos(yaw)))
-                                    cv2.arrowedLine(frame, tuple(ball_center_px), arrow_end, (0, 255, 255), 3, tipLength=0.3)
+                                    cv2.arrowedLine(frame, arrow_start, arrow_end, (0, 255, 255), 3, tipLength=0.3)
                                     # Display theta text
                                     cv2.putText(frame, f"Theta: {theta_deg:.1f} deg", (10, 30), 
                                                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
