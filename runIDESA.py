@@ -46,7 +46,6 @@ def simplify_path(path):
     ## deals with falling diagonal segments
     diagonaldown_path = [cardinal_path[0]]
     i = 1
-
     while i < len(cardinal_path) - 1:
         c_current = cardinal_path[i]
         c_prev = cardinal_path[i-1]
@@ -132,7 +131,7 @@ def rotate_dict(d, k=2):
     rotated = items[-k:] + items[:-k]
     return dict(rotated)
 def compute_theta_send(theta):
-    theta_send = theta
+    theta_send = -theta
     return theta_send
 def bouncing_ball(dy, dx, ball_start):
     '''
@@ -152,21 +151,8 @@ def bouncing_ball(dy, dx, ball_start):
     # elif ball_y>=19:
     #     dy = -9
     return dy, dx
-def send_UDP_signal(ip, port, next_target, frequency = 30):
-    '''
-    send UDP function
 
-    input: next_target (array of dy, dx, theta, angle_b2t)
-    output: sends UDP packet to specified IP and port
-    '''
-    interval = 1.0 / frequency
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    global shared_next_target, next_target_lock, udp_thread_running
-    while udp_thread_running:
-        with next_target_lock:
-            target = shared_next_target.copy()
-        sock.sendto(struct.pack('<iif', int(target[0]), int(target[1]), float(target[2])), (ip, port))
-        time.sleep(interval)
+
 
 ''' Import necessary libraries '''
 # This is the vision library OpenCV
@@ -185,7 +171,6 @@ import os
 import numpy as np
 import socket   #communicate over the network
 import struct
-import threading
 
 
 '''Initiate camera parameters'''
@@ -250,12 +235,8 @@ mode = 'auto'  # can be 'auto' or 'manual'
 UDP_IP = "138.38.229.206" #clearpass IP address for RPI 3B Model +
 # This is the RENOTE port the machine will reply on (on that machine this is the value for the LOCAL port)
 UDP_PORT = 50000
-
-# Shared variables for UDP thread
-shared_next_target = [0, 0, 0]
-next_target_lock = threading.Lock()
-udp_thread_running = True
-udp_thread = None
+sock = socket.socket(socket.AF_INET,    # Family of addresses, in this case IP type 
+                     socket.SOCK_DGRAM) # What protocol to use, in this case UDP (datagram)
 
 # Crop Rotation True/False
 In_range = {}
@@ -460,9 +441,8 @@ while True:
                                         R, _ = cv2.Rodrigues(rvecs[ball_idx[0]][0])
                                         yaw = np.arctan2(R[1, 0], R[0, 0])
                                         # UDP sending
-                                        next_target = np.array([dy, dx,compute_theta_send(yaw), angle_b2t])  # example data to send (y,x (i,j)) coordinates of next target point
-                                        with next_target_lock:
-                                            shared_next_target = next_target.copy()
+                                        next_target = np.array([dy, dx,compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
+                                        sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
                                         print ("9. message:", next_target)
                                 # Convert grid coordinates to pixel coordinates
                                 img_h, img_w = frame.shape[:2]
@@ -527,8 +507,7 @@ while True:
 
                                     # UDP sending
                                     next_target = np.array([dy, dx, compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
-                                    with next_target_lock:
-                                        shared_next_target = next_target.copy()
+                                    sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
                                     print ("13. message:", next_target)
 
                                 # Convert path from grid to pixel coordinates
@@ -634,8 +613,7 @@ while True:
             next_target = np.array([0, 0, compute_theta_send(yaw), 0])
             print ('no movement key pressed')
 
-        with next_target_lock:
-            shared_next_target = next_target.copy()
+        sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
         cv2.imshow('frame-image', frame)
 
     if quit_flag:
@@ -645,9 +623,5 @@ while True:
 cap.release()
 # close all windows
 cv2.destroyAllWindows()
-# Stop UDP thread on exit
-udp_thread_running = False
-if udp_thread is not None:
-    udp_thread.join()
 # exit the kernel
 exit()
