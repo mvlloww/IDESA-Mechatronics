@@ -17,6 +17,27 @@ def get_endpoint_xy(endpoint_value):
         except Exception:
             return None
     return None
+
+def draw_in_range_status(frame, in_range_dict):
+    """Draw the In_range status on the bottom left of the frame."""
+    img_h, img_w = frame.shape[:2]
+    # Build status text
+    status_lines = ["In Range:"]
+    for marker_id, is_in_range in sorted(in_range_dict.items()):
+        status = "YES" if is_in_range else "NO"
+        status_lines.append(f"  ID {marker_id}: {status}")
+    
+    # Draw each line from bottom up
+    line_height = 25
+    start_y = img_h - 20 - (len(status_lines) - 1) * line_height
+    for i, line in enumerate(status_lines):
+        y_pos = start_y + i * line_height
+        # Draw background rectangle for better visibility
+        cv2.putText(frame, line, (10, y_pos), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3)  # Black outline
+        cv2.putText(frame, line, (10, y_pos), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)  # Green text
+
 def simplify_path(path):
 
     '''
@@ -215,8 +236,22 @@ dist_coef = Camera['dist_coef']
 marker_size = 40
 # Define the aruco dictionary
 aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
-# Define the aruco detection parameters
+# Define the aruco detection parameters (tuned for distant markers)
 parameters = aruco.DetectorParameters()
+# For distant/small markers - lower the minimum perimeter rate
+parameters.minMarkerPerimeterRate = 0.01  # Default 0.03, lower = detect smaller markers
+parameters.maxMarkerPerimeterRate = 4.0
+# Adaptive thresholding - more robust to lighting variations
+parameters.adaptiveThreshWinSizeMin = 3
+parameters.adaptiveThreshWinSizeMax = 23
+parameters.adaptiveThreshWinSizeStep = 10
+parameters.adaptiveThreshConstant = 7
+# Corner refinement for more stable detection
+parameters.cornerRefinementMethod = aruco.CORNER_REFINE_SUBPIX
+parameters.cornerRefinementWinSize = 5
+parameters.cornerRefinementMaxIterations = 30
+# Error correction - helps with partially obscured markers
+parameters.errorCorrectionRate = 0.6
 
 # CAP_DSHOW to make sure it uses DirectShow backend on Windows (more stable)
 cap = cv2.VideoCapture(0)
@@ -250,6 +285,13 @@ end_points = {1:[16,6], 2:[16,10], 3:[4,16], 4:[4,24], 5:[16,32], 6:[16,36]}
 ball_id = 8
 # Create id_buffer dictionary
 id_buffer = {}
+
+# Ball detection temporal smoothing
+ball_last_corners = None  # Last known ball corners
+ball_last_center = None   # Last known ball center (grid coords)
+ball_last_yaw = 0.0       # Last known ball yaw angle
+ball_missing_frames = 0   # Counter for frames ball has been missing
+ball_max_missing = 5      # Max frames to keep using last known position
 
 '''Temporary variables'''
 IsFire = False
@@ -287,6 +329,7 @@ while True:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         # Detect ArUco markers in the grey image
         corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)  
+        draw_in_range_status(frame, In_range)
         cv2.imshow('frame-image', frame)
         
         # Single key poll per frame to avoid missing inputs
@@ -321,17 +364,30 @@ while True:
                 if marker_id not in end_points.keys():
                     continue  # Skip markers not in end_points
 
-                # Update grid with obstacles for all non-target markers
-                grid = grid_obstacle(ids, corners, marker_id, x_coords, y_coords, grid, radius, frame, grid_width, grid_height)
+                # Get center of this marker
+                marker_center = get_center(corners[t], frame, grid_width, grid_height)  # returns (x, y)
+                target_endpoint = end_points.get(marker_id)  # stored as [y, x]
                 
-                if get_center(corners[t], frame, grid_width, grid_height) == end_points.get(marker_id):
-                    In_range[marker_id] = True 
-                    continue
-                elif marker_id in end_points.keys() and get_center(corners[t], frame, grid_width, grid_height) != end_points.get(marker_id):
+                # Check if marker is at its endpoint (with tolerance of 1 grid cell)
+                # marker_center is (x, y), endpoint is [y, x]
+                endpoint_x = target_endpoint[1]
+                endpoint_y = target_endpoint[0]
+                distance_to_endpoint = abs(marker_center[0] - endpoint_x) + abs(marker_center[1] - endpoint_y)
+                
+                if distance_to_endpoint <= 1:  # Within 1 grid cell tolerance
+                    In_range[marker_id] = True
+                    # Mark this target as an obstacle since it's in position
+                    mask = (x_coords - marker_center[0])**2 + (y_coords - marker_center[1])**2 <= radius**2
+                    grid[mask] = 0
+                    continue  # Skip pathfinding for this target
+                else:
                     In_range[marker_id] = False
 
+                # Update grid with obstacles for all non-target markers
+                grid = grid_obstacle(ids, corners, marker_id, x_coords, y_coords, grid, radius, frame, grid_width, grid_height)
+
                 # Get center of target ArUco code on grid
-                start_point = get_center(corners[t], frame, grid_width, grid_height)
+                start_point = marker_center
                 #print("1. Start Point for ID ", marker_id, ": ", start_point)
 
                 # append start points and id[t] to id_buffer
@@ -386,22 +442,75 @@ while True:
                         print ("Manual mode activated. Use 'awsd' keys to control the ball, 'c' to switch to auto mode, 'q' to quit.")
                         break
 
-                    if ids is not None and len(ids) > 0 and keys in ids.flatten() and ball_id in ids.flatten():
+                    # Check if current target is still visible
+                    target_visible = ids is not None and len(ids) > 0 and keys in ids.flatten()
+                    
+                    if not target_visible:
+                        # Target disappeared - break out to recalculate and pick new target
+                        print(f"Target ID {keys} lost - switching to new target...")
+                        break
+                    
+                    if target_visible and ball_id in ids.flatten():
+                        # Ball detected - update tracking
+                        ball_missing_frames = 0
+                        ball_idx_temp = np.where(ids == ball_id)[0][0]
+                        ball_last_corners = corners[ball_idx_temp].copy()
                         out = aruco.drawDetectedMarkers(frame, corners, ids)
                         rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, marker_size, CM, dist_coef)
                         center_key = get_center(corners[np.where(ids==keys)[0][0]], frame, grid_width, grid_height)
                         center_ball = get_center(corners[np.where(ids==ball_id)[0][0]], frame, grid_width, grid_height)
+                        ball_last_center = center_ball  # Update last known center
                         # Print grid positions of ball and target
                         print(f"Ball (ID {ball_id}) grid position: {center_ball}, Target (ID {keys}) grid position: {center_key}")
+                    elif target_visible and ball_last_center is not None and ball_missing_frames < ball_max_missing:
+                        # Ball NOT detected but we have recent data - use last known position
+                        ball_missing_frames += 1
+                        print(f"Ball missing frame {ball_missing_frames}/{ball_max_missing} - using last known position")
+                        out = aruco.drawDetectedMarkers(frame, corners, ids)
+                        rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, marker_size, CM, dist_coef)
+                        center_key = get_center(corners[np.where(ids==keys)[0][0]], frame, grid_width, grid_height)
+                        center_ball = ball_last_center  # Use last known ball center
+                        # Print grid positions of ball and target
+                        print(f"Ball (ID {ball_id}) grid position (CACHED): {center_ball}, Target (ID {keys}) grid position: {center_key}")
+                    else:
+                        # Ball not detected and cache expired - reset cache and wait for ball
+                        if ball_missing_frames >= ball_max_missing:
+                            # Cache expired - reset so fresh detection can work
+                            print(f"Ball cache expired - waiting for ball detection...")
+                            ball_missing_frames = 0  # Reset counter for next detection cycle
+                        elif ball_last_corners is not None:
+                            ball_missing_frames += 1
+                        draw_in_range_status(frame, In_range)
+                        cv2.imshow('frame-image', frame)
+                        continue
+                    
+                    # Common code for both detected and cached ball
+                    if True:  # Replaces the old if block indent
+                        # Update In_range for ALL visible targets (not just current one)
+                        for t_idx in range(len(ids)):
+                            t_id = int(ids[t_idx][0])
+                            if t_id in end_points.keys() and t_id != ball_id:
+                                t_center = get_center(corners[t_idx], frame, grid_width, grid_height)
+                                t_endpoint = end_points.get(t_id)
+                                t_dist = abs(t_center[0] - t_endpoint[1]) + abs(t_center[1] - t_endpoint[0])
+                                In_range[t_id] = (t_dist <= 1)
+                        
                         # Get angle of ball to target
                         angle_b2t = np.arctan2(center_key[1]-center_ball[1], center_key[0]-center_ball[0])
                         
                         # cv2.imshow('frame-image', frame)
-                        if end_points.get(keys) == center_key:
+                        # Check if target reached endpoint (with tolerance)
+                        target_endpoint = end_points.get(keys)  # [y, x]
+                        endpoint_x = target_endpoint[1]
+                        endpoint_y = target_endpoint[0]
+                        distance_to_endpoint = abs(center_key[0] - endpoint_x) + abs(center_key[1] - endpoint_y)
+                        
+                        if distance_to_endpoint <= 1:  # Within 1 grid cell tolerance
                             position_status = True
                             In_range[keys] = True
+                            print(f"Target ID {keys} reached endpoint!")
                             break
-                            #print ("3. Target ID ", keys, " reached endpoint. switching to next target.")
+                            #print ("3. Target ID ", keys, " reached endpoint. switching to next target."))
 
                         grid = grid_obstacle(ids, corners, keys, x_coords, y_coords, grid, radius, frame, grid_width, grid_height)
 
@@ -430,12 +539,15 @@ while True:
                                 radius_pixel = int(radius * img_w / grid_width)
                                 cv2.circle(frame, (ox_pixel, oy_pixel), radius_pixel, (0,0,255), 2)
 
+                                # Threshold vector to determine attack angle onto target
+                                attackThreshold = 3
+
                                 # Determine fake target position opposite to endpoint
-                                if len(path_t2e) >= 2:
+                                if len(path_t2e) >= attackThreshold:
                                     # Vector from target to endpoint
                                     vec_t2e = (path_t2e[1][1] - target_start[0], path_t2e[1][0] - target_start[1])
                                     # Place fake target opposite the endpoint, at a certain distance
-                                    push_distance = 2  # adjust as needed
+                                    push_distance = attackThreshold  # adjust as needed
                                     fake_target = (target_start[0] - push_distance * vec_t2e[0], target_start[1] - push_distance * vec_t2e[1])
                                 else:
                                     # Path too short, use target position
@@ -460,11 +572,19 @@ while True:
                                     dx = diagonaldown_path_b2t[1][1] - ball_start[0]
                                     dy, dx = bouncing_ball(dy, dx, ball_start)
 
-                                    # Recalculate ball_idx for current frame
+                                    # Get ball corners - use detected or cached
                                     ball_idx = np.where(ids == ball_id)[0]
                                     if ball_idx.size > 0:
+                                        ball_corners_for_yaw = corners[ball_idx[0]]
+                                    elif ball_last_corners is not None:
+                                        ball_corners_for_yaw = ball_last_corners
+                                    else:
+                                        ball_corners_for_yaw = None
+                                    
+                                    if ball_corners_for_yaw is not None:
                                         # Use 2D corner-based angle (ignores tilt/pitch)
-                                        yaw = get_2d_angle_from_corners(corners[ball_idx[0]])
+                                        yaw = get_2d_angle_from_corners(ball_corners_for_yaw)
+                                        ball_last_yaw = yaw  # Update cached yaw
                                         # UDP sending
                                         next_target = np.array([dy, dx,compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
                                         sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
@@ -474,8 +594,8 @@ while True:
                                         theta_deg = np.degrees(yaw)
                                         theta_send_deg = np.degrees(compute_theta_send(yaw))
                                         # Get ball center in pixels for visualization
-                                        ball_corners = corners[ball_idx[0]].reshape((4, 2))
-                                        ball_center_px = ball_corners.mean(axis=0)
+                                        ball_corners_vis = ball_corners_for_yaw.reshape((4, 2))
+                                        ball_center_px = ball_corners_vis.mean(axis=0)
                                         # Draw arrow showing marker's forward direction
                                         # Arrow points UP when theta=0, rotates CW for positive theta
                                         arrow_length = 60
@@ -528,6 +648,7 @@ while True:
                                     text_pos = (ep_pixel[0] + 10, ep_pixel[1] - 10)
                                     cv2.putText(frame, str(k), text_pos, cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,0), 2, cv2.LINE_AA)
                                 
+                                draw_in_range_status(frame, In_range)
                                 cv2.imshow('frame-image', frame)
                             else:
                                 if len(path_t2e) > 0:
@@ -544,11 +665,19 @@ while True:
                                 dx = diagonaldown_path_t2e[1][1] - target_start[0]
                                 dy, dx = bouncing_ball(dy, dx, ball_start)
 
-                                # Recalculate ball_idx for current frame
+                                # Get ball corners - use detected or cached
                                 ball_idx = np.where(ids == ball_id)[0]
                                 if ball_idx.size > 0:
+                                    ball_corners_for_yaw = corners[ball_idx[0]]
+                                elif ball_last_corners is not None:
+                                    ball_corners_for_yaw = ball_last_corners
+                                else:
+                                    ball_corners_for_yaw = None
+                                
+                                if ball_corners_for_yaw is not None:
                                     # Use 2D corner-based angle (ignores tilt/pitch)
-                                    yaw = get_2d_angle_from_corners(corners[ball_idx[0]])
+                                    yaw = get_2d_angle_from_corners(ball_corners_for_yaw)
+                                    ball_last_yaw = yaw  # Update cached yaw
 
                                     # UDP sending
                                     next_target = np.array([dy, dx, compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
@@ -559,8 +688,8 @@ while True:
                                     theta_deg = np.degrees(yaw)
                                     theta_send_deg = np.degrees(compute_theta_send(yaw))
                                     # Get ball center in pixels for visualization
-                                    ball_corners = corners[ball_idx[0]].reshape((4, 2))
-                                    ball_center_px = ball_corners.mean(axis=0)
+                                    ball_corners_vis = ball_corners_for_yaw.reshape((4, 2))
+                                    ball_center_px = ball_corners_vis.mean(axis=0)
                                     # Draw arrow showing marker's forward direction
                                     # Arrow points UP when theta=0, rotates CW for positive theta
                                     arrow_length = 60
@@ -609,10 +738,8 @@ while True:
 
                                 cv2.drawMarker(frame, ball_pixel, (0,255,0), cv2.MARKER_TILTED_CROSS, 40, 2)
                                 cv2.drawMarker(frame, target_pixel, (0,0,255), cv2.MARKER_TILTED_CROSS, 40, 2)
+                                draw_in_range_status(frame, In_range)
                                 cv2.imshow('frame-image', frame)
-                    else:
-                        cv2.imshow('frame-image', frame)
-                        break
                 
                 # Display the frame once after all processing
                 #cv2.imshow('frame-image', frame)
@@ -623,9 +750,12 @@ while True:
             # if In_range.get(keys)==True:
             #     end_points = rotate_dict(end_points, k=2)
 
-            # Final check for all targets reached - rotate if so
-            if len(In_range) == 6 and all(In_range.get(k, False) for k in end_points.keys()):
+            # Final check for all targets reached - rotate endpoints
+            if len(In_range) >= len(end_points) and all(In_range.get(k, False) for k in end_points.keys()):
+                print("All targets in position! Rotating endpoints...")
                 end_points = rotate_dict(end_points, k=2)
+                In_range.clear()  # Reset In_range for new endpoint assignments
+                print(f"New endpoints: {end_points}")
         
     while mode == 'manual' and not quit_flag:
         
@@ -680,6 +810,7 @@ while True:
             print ('no movement key pressed')
 
         sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
+        draw_in_range_status(frame, In_range)
         cv2.imshow('frame-image', frame)
 
     if quit_flag:
