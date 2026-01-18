@@ -199,109 +199,88 @@ def get_2d_angle_from_corners(corners):
     angle = np.arctan2(-forward_x, -forward_y)
     return angle
 
-def detect_fire(frame):
+def get_phi1_angle(target_center_px, ball_center_px):
     """
-    Detect large red object in the frame (fire detection).
-    Returns: (is_fire_detected, fire_center_pixel, fire_area)
-    - is_fire_detected: True if large red object found
-    - fire_center_pixel: (x, y) pixel coordinates of fire center, or None
-    - fire_area: area of detected red region in pixels
+    Calculate phi1: angle from vertical (from target center to ball center).
+    Uses pixel coordinates for fine angular resolution (~0.1 degrees).
     
-    TODO: Adjust HSV ranges and area threshold based on actual fire/red object
+    Coordinate system:
+    - 0° = ball is directly ABOVE target (negative Y direction in screen coords)
+    - Positive phi1 = anticlockwise rotation from vertical up
+    - Negative phi1 = clockwise rotation from vertical up
+    
+    Parameters:
+    - target_center_px: (x, y) PIXEL coordinates of target ArUco center
+    - ball_center_px: (x, y) PIXEL coordinates of ball ArUco center
+    
+    Returns angle in radians from vertical.
     """
-    # Convert to HSV for color detection
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    # Vector from target to ball (in pixels for fine resolution)
+    dx = ball_center_px[0] - target_center_px[0]  # positive = ball is to the right
+    dy = ball_center_px[1] - target_center_px[1]  # positive = ball is below (screen coords)
     
-    # Red color range in HSV (red wraps around, so need two ranges)
-    # TODO: Adjust these values based on actual red object to detect
-    lower_red1 = np.array([0, 120, 70])
-    upper_red1 = np.array([10, 255, 255])
-    lower_red2 = np.array([170, 120, 70])
-    upper_red2 = np.array([180, 255, 255])
-    
-    # Create masks for both red ranges
-    mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
-    mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
-    mask = mask1 + mask2
-    
-    # Apply morphological operations to clean up the mask
-    kernel = np.ones((5, 5), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-    
-    # Find contours
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    # Find the largest red contour
-    min_fire_area = 500  # TODO: Adjust minimum area threshold
-    largest_area = 0
-    fire_center = None
-    
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        if area > largest_area and area > min_fire_area:
-            largest_area = area
-            M = cv2.moments(contour)
-            if M["m00"] > 0:
-                cx = int(M["m10"] / M["m00"])
-                cy = int(M["m01"] / M["m00"])
-                fire_center = (cx, cy)
-    
-    is_fire = fire_center is not None and largest_area > min_fire_area
-    return is_fire, fire_center, largest_area
+    # Calculate angle from vertical up (negative Y axis)
+    # atan2(x, -y) gives angle from Y- axis with CCW positive
+    phi1 = np.arctan2(dx, -dy)
+    return phi1
 
-def get_turret_forward_direction(corners):
+def get_phi2_angle(target_center, next_waypoint):
     """
-    Get the forward direction vector of the turret (north direction of ArUco).
-    Returns unit vector (fx, fy) in pixel coordinates pointing in turret's forward direction.
-    Forward is defined as perpendicular to the top edge, pointing "up" from the marker.
+    Calculate phi2: required angle where ball should be to push target towards next waypoint.
+    This is the OPPOSITE direction of where the target needs to go.
+    
+    The angle is snapped to the nearest 45 degree interval:
+    0°, 45°, 90°, 135°, 180°, -135°, -90°, -45°
+    
+    Parameters:
+    - target_center: (x, y) grid coordinates of target ArUco center
+    - next_waypoint: (y, x) or (i, j) grid coordinates of next waypoint (note: path format is (i,j) = (y,x))
+    
+    Returns angle in radians snapped to 45 degree intervals.
     """
-    pts = corners.reshape((4, 2))
-    # Vector from top-left to top-right (top edge)
-    top_edge = pts[1] - pts[0]
+    # Vector from target to next waypoint (direction target should move)
+    # Note: next_waypoint is in (i,j) = (y,x) format from pathfinding
+    dx_to_waypoint = next_waypoint[1] - target_center[0]  # waypoint x - target x
+    dy_to_waypoint = next_waypoint[0] - target_center[1]  # waypoint y - target y
     
-    # Forward direction is perpendicular to top edge (90° CCW from top edge in screen coords)
-    # In screen coords (Y down), rotating 90° CCW: (x, y) -> (-y, x)
-    # But we want "up" from marker, which is 90° CW: (x, y) -> (y, -x)
-    forward_x = top_edge[1]
-    forward_y = -top_edge[0]
+    # Ball should be on the OPPOSITE side to push target towards waypoint
+    dx_ball_needed = -dx_to_waypoint
+    dy_ball_needed = -dy_to_waypoint
     
-    # Normalize to unit vector
-    length = np.sqrt(forward_x**2 + forward_y**2)
-    if length > 0:
-        forward_x /= length
-        forward_y /= length
+    # Calculate angle from vertical (same convention as phi1)
+    raw_angle = np.arctan2(dx_ball_needed, -dy_ball_needed)
     
-    return forward_x, forward_y
+    # Snap to nearest 45 degree interval
+    # 45 degrees = pi/4 radians
+    snap_interval = np.pi / 4
+    phi2 = round(raw_angle / snap_interval) * snap_interval
+    
+    # Normalize to [-pi, pi]
+    if phi2 > np.pi:
+        phi2 -= 2 * np.pi
+    elif phi2 < -np.pi:
+        phi2 += 2 * np.pi
+    
+    return phi2
 
-def find_closest_target_to_fire(fire_center_pixel, ids, corners, end_points, frame, grid_width, grid_height):
+def compute_phi(phi1, phi2):
     """
-    Find which target (1-6) is closest to the detected fire.
-    Returns the marker_id of the closest target.
+    Calculate phi: the angular difference between current ball position (phi1)
+    and required ball position (phi2).
+    
+    Returns the shortest angular difference in radians.
+    Positive = ball needs to move anticlockwise around target
+    Negative = ball needs to move clockwise around target
     """
-    min_distance = float('inf')
-    closest_target_id = None
+    phi = phi1 - phi2
     
-    if ids is None or fire_center_pixel is None:
-        return None
+    # Normalize to [-pi, pi] for shortest rotation
+    while phi > np.pi:
+        phi -= 2 * np.pi
+    while phi < -np.pi:
+        phi += 2 * np.pi
     
-    img_h, img_w = frame.shape[:2]
-    
-    for i, marker_id in enumerate(ids.flatten()):
-        if marker_id in end_points.keys():  # Only check targets 1-6
-            # Get pixel center of this marker
-            pts = corners[i].reshape((4, 2))
-            center_pixel = pts.mean(axis=0)
-            
-            # Calculate distance to fire
-            dist = np.sqrt((center_pixel[0] - fire_center_pixel[0])**2 + 
-                          (center_pixel[1] - fire_center_pixel[1])**2)
-            
-            if dist < min_distance:
-                min_distance = dist
-                closest_target_id = int(marker_id)
-    
-    return closest_target_id
+    return phi
 
 
 
@@ -397,29 +376,21 @@ ball_last_yaw = 0.0       # Last known ball yaw angle
 ball_missing_frames = 0   # Counter for frames ball has been missing
 ball_max_missing = 5      # Max frames to keep using last known position
 
+# Target detection temporal smoothing (3 second timeout)
+target_last_center = None      # Last known target center (grid coords)
+target_last_corners = None     # Last known target corners
+target_last_seen_time = None   # Timestamp when target was last detected
+target_cache_timeout = 3.0     # Seconds before switching to new target
+
 '''Temporary variables'''
-IsFire = False
 quit_flag = False
 mode = 'auto'  # can be 'auto' or 'manual'
-
-# Turret/Fire detection variables
-turret_id = 10  # ArUco ID for the turret
-fire_center_pixel = None  # Pixel coords of detected fire
-fire_target_id = None  # Which target (1-6) is closest to fire
-turret_endpoint = None  # Calculated endpoint for turret [y, x] format
-pump_active = False  # Track if pump is currently on
 
 ''' Setup UDP communication '''
 # Ball control UDP
 UDP_IP = "138.38.229.206" #clearpass IP address for RPI 3B Model +
 UDP_PORT = 50000
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-# Turret pump UDP (separate socket)
-# TODO: Set actual IP and port for turret pump control
-TURRET_UDP_IP = "138.38.229.207"  # Placeholder - update with actual turret IP
-TURRET_UDP_PORT = 50001  # Placeholder - update with actual turret port
-turret_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 # Crop Rotation True/False
 In_range = {}
@@ -430,24 +401,13 @@ while True:
     start = time.perf_counter()
     quit_flag = False
 
-    while IsFire == False and not quit_flag and mode == 'auto':
+    while not quit_flag and mode == 'auto':
         # Capture current frame from the camera
         ret, frame = cap.read()
 
         # Skip frame if capture failed
         if not ret or frame is None:
             continue
-
-        # Check for fire (large red object)
-        is_fire_detected, fire_center_pixel, fire_area = detect_fire(frame)
-        if is_fire_detected:
-            IsFire = True
-            # Draw fire indicator on frame
-            cv2.circle(frame, fire_center_pixel, 20, (0, 0, 255), 3)
-            cv2.putText(frame, "FIRE DETECTED!", (fire_center_pixel[0]-50, fire_center_pixel[1]-30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-            print(f"Fire detected at pixel {fire_center_pixel}, area: {fire_area}")
-            break  # Exit to fire handling loop
 
         # Convert the image from the camera to Gray scale
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -541,14 +501,17 @@ while True:
             if sorted_targets:
                 keys = sorted_targets[0][0]  # Lock onto the first target only
                 position_status = False
+                # Reset target cache when locking onto a new target
+                target_last_center = None
+                target_last_corners = None
+                target_last_seen_time = None
+                
                 while position_status == False and not quit_flag:
                     ret, frame = cap.read()
                     
                     # Skip frame if capture failed
                     if not ret or frame is None:
                         continue
-
-                    ## check IsFire status here##
 
                     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                     corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
@@ -569,33 +532,71 @@ while True:
                     # Check if current target is still visible
                     target_visible = ids is not None and len(ids) > 0 and keys in ids.flatten()
                     
-                    if not target_visible:
-                        # Target disappeared - break out to recalculate and pick new target
-                        print(f"Target ID {keys} lost - switching to new target...")
+                    if target_visible:
+                        # Target detected - update cache and timestamp
+                        target_idx = np.where(ids == keys)[0][0]
+                        target_last_corners = corners[target_idx].copy()
+                        target_last_center = get_center(corners[target_idx], frame, grid_width, grid_height)
+                        target_last_seen_time = time.perf_counter()
+                    elif target_last_center is not None and target_last_seen_time is not None:
+                        # Target not visible - check if cache is still valid (within 3 seconds)
+                        time_since_last_seen = time.perf_counter() - target_last_seen_time
+                        if time_since_last_seen >= target_cache_timeout:
+                            # Cache expired - break out to find new target
+                            print(f"Target ID {keys} lost for {time_since_last_seen:.1f}s - switching to new target...")
+                            target_last_center = None
+                            target_last_corners = None
+                            target_last_seen_time = None
+                            break
+                        else:
+                            # Use cached position
+                            print(f"Target ID {keys} not visible - using cached position ({time_since_last_seen:.1f}s / {target_cache_timeout}s)")
+                    else:
+                        # No cache available - break immediately
+                        print(f"Target ID {keys} lost - no cached position available, switching to new target...")
                         break
                     
-                    if target_visible and ball_id in ids.flatten():
+                    # Determine if we have a valid target position (either detected or cached)
+                    target_position_available = target_visible or (target_last_center is not None and target_last_seen_time is not None 
+                                                                    and (time.perf_counter() - target_last_seen_time) < target_cache_timeout)
+                    
+                    # Check if ball is visible in current frame
+                    ball_visible = ids is not None and len(ids) > 0 and ball_id in ids.flatten()
+                    
+                    if target_position_available and ball_visible:
                         # Ball detected - update tracking
                         ball_missing_frames = 0
                         ball_idx_temp = np.where(ids == ball_id)[0][0]
                         ball_last_corners = corners[ball_idx_temp].copy()
                         out = aruco.drawDetectedMarkers(frame, corners, ids)
                         rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, marker_size, CM, dist_coef)
-                        center_key = get_center(corners[np.where(ids==keys)[0][0]], frame, grid_width, grid_height)
+                        # Get target center - use detected if visible, otherwise use cached
+                        if target_visible:
+                            center_key = get_center(corners[np.where(ids==keys)[0][0]], frame, grid_width, grid_height)
+                        else:
+                            center_key = target_last_center  # Use cached target position
                         center_ball = get_center(corners[np.where(ids==ball_id)[0][0]], frame, grid_width, grid_height)
                         ball_last_center = center_ball  # Update last known center
                         # Print grid positions of ball and target
-                        print(f"Ball (ID {ball_id}) grid position: {center_ball}, Target (ID {keys}) grid position: {center_key}")
-                    elif target_visible and ball_last_center is not None and ball_missing_frames < ball_max_missing:
+                        cached_str = "" if target_visible else " (CACHED)"
+                        print(f"Ball (ID {ball_id}) grid position: {center_ball}, Target (ID {keys}) grid position{cached_str}: {center_key}")
+                    elif target_position_available and ball_last_center is not None and ball_missing_frames < ball_max_missing:
                         # Ball NOT detected but we have recent data - use last known position
                         ball_missing_frames += 1
                         print(f"Ball missing frame {ball_missing_frames}/{ball_max_missing} - using last known position")
-                        out = aruco.drawDetectedMarkers(frame, corners, ids)
-                        rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, marker_size, CM, dist_coef)
-                        center_key = get_center(corners[np.where(ids==keys)[0][0]], frame, grid_width, grid_height)
+                        # Only draw markers if there are any detected
+                        if ids is not None and len(ids) > 0:
+                            out = aruco.drawDetectedMarkers(frame, corners, ids)
+                            rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, marker_size, CM, dist_coef)
+                        # Get target center - use detected if visible, otherwise use cached
+                        if target_visible:
+                            center_key = get_center(corners[np.where(ids==keys)[0][0]], frame, grid_width, grid_height)
+                        else:
+                            center_key = target_last_center  # Use cached target position
                         center_ball = ball_last_center  # Use last known ball center
                         # Print grid positions of ball and target
-                        print(f"Ball (ID {ball_id}) grid position (CACHED): {center_ball}, Target (ID {keys}) grid position: {center_key}")
+                        target_cached_str = "" if target_visible else " (CACHED)"
+                        print(f"Ball (ID {ball_id}) grid position (CACHED): {center_ball}, Target (ID {keys}) grid position{target_cached_str}: {center_key}")
                     else:
                         # Ball not detected and cache expired - reset cache and wait for ball
                         if ball_missing_frames >= ball_max_missing:
@@ -611,13 +612,14 @@ while True:
                     # Common code for both detected and cached ball
                     if True:  # Replaces the old if block indent
                         # Update In_range for ALL visible targets (not just current one)
-                        for t_idx in range(len(ids)):
-                            t_id = int(ids[t_idx][0])
-                            if t_id in end_points.keys() and t_id != ball_id:
-                                t_center = get_center(corners[t_idx], frame, grid_width, grid_height)
-                                t_endpoint = end_points.get(t_id)
-                                t_dist = abs(t_center[0] - t_endpoint[1]) + abs(t_center[1] - t_endpoint[0])
-                                In_range[t_id] = (t_dist <= 1)
+                        if ids is not None and len(ids) > 0:
+                            for t_idx in range(len(ids)):
+                                t_id = int(ids[t_idx][0])
+                                if t_id in end_points.keys() and t_id != ball_id:
+                                    t_center = get_center(corners[t_idx], frame, grid_width, grid_height)
+                                    t_endpoint = end_points.get(t_id)
+                                    t_dist = abs(t_center[0] - t_endpoint[1]) + abs(t_center[1] - t_endpoint[0])
+                                    In_range[t_id] = (t_dist <= 1)
                         
                         # Get angle of ball to target
                         angle_b2t = np.arctan2(center_key[1]-center_ball[1], center_key[0]-center_ball[0])
@@ -636,7 +638,9 @@ while True:
                             break
                             #print ("3. Target ID ", keys, " reached endpoint. switching to next target."))
 
-                        grid = grid_obstacle(ids, corners, keys, x_coords, y_coords, grid, radius, frame, grid_width, grid_height)
+                        # Only update obstacles if we have detected markers
+                        if ids is not None and len(ids) > 0:
+                            grid = grid_obstacle(ids, corners, keys, x_coords, y_coords, grid, radius, frame, grid_width, grid_height)
 
                         if center_ball is not None and center_key is not None:
                             ball_start = center_ball
@@ -697,7 +701,10 @@ while True:
                                     dy, dx = bouncing_ball(dy, dx, ball_start)
 
                                     # Get ball corners - use detected or cached
-                                    ball_idx = np.where(ids == ball_id)[0]
+                                    if ids is not None and len(ids) > 0:
+                                        ball_idx = np.where(ids == ball_id)[0]
+                                    else:
+                                        ball_idx = np.array([])  # Empty array when no markers detected
                                     if ball_idx.size > 0:
                                         ball_corners_for_yaw = corners[ball_idx[0]]
                                     elif ball_last_corners is not None:
@@ -775,6 +782,7 @@ while True:
                                 draw_in_range_status(frame, In_range)
                                 cv2.imshow('frame-image', frame)
                             else:
+                                # PUSHING MODE - ball is close enough to push target
                                 if len(path_t2e) > 0:
                                     _, diagonaldown_path_t2e = simplify_path(path_t2e)
                                 else:
@@ -785,12 +793,96 @@ while True:
                                 if len(diagonaldown_path_t2e) < 1:
                                     continue
                                 
-                                dy = diagonaldown_path_t2e[1][0] - target_start[1]
-                                dx = diagonaldown_path_t2e[1][1] - target_start[0]
-                                dy, dx = bouncing_ball(dy, dx, ball_start)
+                                # Get ball corners for phi1 calculation - use detected or cached
+                                if ids is not None and len(ids) > 0:
+                                    ball_idx_phi = np.where(ids == ball_id)[0]
+                                else:
+                                    ball_idx_phi = np.array([])
+                                if ball_idx_phi.size > 0:
+                                    ball_corners_for_phi = corners[ball_idx_phi[0]]
+                                elif ball_last_corners is not None:
+                                    ball_corners_for_phi = ball_last_corners
+                                else:
+                                    ball_corners_for_phi = None
+                                
+                                # Get target corners for phi1 calculation - use detected or cached
+                                if target_visible:
+                                    target_corners_for_phi = corners[np.where(ids == keys)[0][0]]
+                                elif target_last_corners is not None:
+                                    target_corners_for_phi = target_last_corners
+                                else:
+                                    target_corners_for_phi = None
+                                
+                                # Calculate phi1 using PIXEL coordinates for fine resolution
+                                if ball_corners_for_phi is not None and target_corners_for_phi is not None:
+                                    # Get pixel centers from corners
+                                    ball_pts = ball_corners_for_phi.reshape((4, 2))
+                                    ball_center_px = ball_pts.mean(axis=0)  # (x, y) in pixels
+                                    target_pts = target_corners_for_phi.reshape((4, 2))
+                                    target_center_px = target_pts.mean(axis=0)  # (x, y) in pixels
+                                    
+                                    # phi1: angle from vertical (from target center) to ball center using pixels
+                                    phi1 = get_phi1_angle(target_center_px, ball_center_px)
+                                else:
+                                    # Fallback to grid-based if corners not available
+                                    phi1 = get_phi1_angle(
+                                        (target_start[0] * frame.shape[1] / grid_width, target_start[1] * frame.shape[0] / grid_height),
+                                        (ball_start[0] * frame.shape[1] / grid_width, ball_start[1] * frame.shape[0] / grid_height)
+                                    )
+                                
+                                # phi2: required angle where ball should be (snapped to 45 deg intervals)
+                                # Use next waypoint from path_t2e (target to endpoint path)
+                                next_waypoint = diagonaldown_path_t2e[1]  # (i, j) = (y, x) format
+                                phi2 = get_phi2_angle(target_start, next_waypoint)
+                                
+                                # phi: difference between current and required ball position
+                                phi = compute_phi(phi1, phi2)
+                                
+                                # Print phi values for debugging
+                                print(f"PUSHING MODE - phi1: {np.degrees(phi1):.1f}°, phi2: {np.degrees(phi2):.1f}°, phi: {np.degrees(phi):.1f}°")
+                                
+                                # ===== CONTROL SYSTEM FOR BALL MOVEMENT =====
+                                # Control gains (tune these values)
+                                k1 = 1.0  # Gain for pushing direction (towards waypoint)
+                                k2 = 0.5  # Gain for phi correction (repositioning around target)
+                                
+                                # dx1, dy1: Direction to push target towards waypoint
+                                dy1 = diagonaldown_path_t2e[1][0] - target_start[1]
+                                dx1 = diagonaldown_path_t2e[1][1] - target_start[0]
+                                dy1, dx1 = bouncing_ball(dy1, dx1, ball_start)
+                                
+                                # dx2, dy2: Direction to move ball to reduce phi to 0
+                                # Calculate using trigonometry - positions on a circle around target
+                                # Get the radius from target to ball (in grid units)
+                                radius_ball_to_target = np.sqrt((ball_start[0] - target_start[0])**2 + 
+                                                                 (ball_start[1] - target_start[1])**2)
+                                
+                                # Current ball position relative to target (at angle phi1)
+                                # Using convention: x = r*sin(phi), y = -r*cos(phi) where 0° is up
+                                ball_rel_x_current = radius_ball_to_target * np.sin(phi1)
+                                ball_rel_y_current = -radius_ball_to_target * np.cos(phi1)
+                                
+                                # Desired ball position relative to target (at angle phi2)
+                                ball_rel_x_desired = radius_ball_to_target * np.sin(phi2)
+                                ball_rel_y_desired = -radius_ball_to_target * np.cos(phi2)
+                                
+                                # dx2, dy2: Vector from current to desired position
+                                # Note: In grid coords, x is horizontal (columns), y is vertical (rows)
+                                dx2 = ball_rel_x_desired - ball_rel_x_current
+                                dy2 = ball_rel_y_desired - ball_rel_y_current
+                                
+                                # Combine dx1/dy1 (push direction) with dx2/dy2 (phi correction)
+                                dx_out = (k1 * dx1) + (k2 * dx2)
+                                dy_out = (k1 * dy1) + (k2 * dy2)
+                                
+                                # Print control values for debugging
+                                print(f"  dx1={dx1:.2f}, dy1={dy1:.2f} | dx2={dx2:.2f}, dy2={dy2:.2f} | dx_out={dx_out:.2f}, dy_out={dy_out:.2f}")
 
                                 # Get ball corners - use detected or cached
-                                ball_idx = np.where(ids == ball_id)[0]
+                                if ids is not None and len(ids) > 0:
+                                    ball_idx = np.where(ids == ball_id)[0]
+                                else:
+                                    ball_idx = np.array([])  # Empty array when no markers detected
                                 if ball_idx.size > 0:
                                     ball_corners_for_yaw = corners[ball_idx[0]]
                                 elif ball_last_corners is not None:
@@ -803,8 +895,8 @@ while True:
                                     yaw = get_2d_angle_from_corners(ball_corners_for_yaw)
                                     ball_last_yaw = yaw  # Update cached yaw
 
-                                    # UDP sending
-                                    next_target = np.array([dy, dx, compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
+                                    # UDP sending with combined control output
+                                    next_target = np.array([dy_out, dx_out, compute_theta_send(yaw), angle_b2t])
                                     sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
                                     print ("13. message:", next_target)
                                     
@@ -852,6 +944,53 @@ while True:
                                 # Convert markers to pixel coordinates
                                 ball_pixel = (int(center_ball[0] * img_w / grid_width), int(center_ball[1] * img_h / grid_height))
                                 target_pixel = (int(target_start[0] * img_w / grid_width), int(target_start[1] * img_h / grid_height))
+                                
+                                # Visualize phi angles in pushing mode
+                                phi1_deg = np.degrees(phi1)
+                                phi2_deg = np.degrees(phi2)
+                                phi_deg = np.degrees(phi)
+                                # Draw phi1 arrow (cyan) - from target to ball direction
+                                phi_arrow_length = 50
+                                phi1_end = (int(target_pixel[0] + phi_arrow_length * np.sin(phi1)),
+                                           int(target_pixel[1] - phi_arrow_length * np.cos(phi1)))
+                                cv2.arrowedLine(frame, target_pixel, phi1_end, (255, 255, 0), 2, tipLength=0.3)  # Cyan
+                                # Draw phi2 arrow (magenta) - required ball position direction
+                                phi2_end = (int(target_pixel[0] + phi_arrow_length * np.sin(phi2)),
+                                           int(target_pixel[1] - phi_arrow_length * np.cos(phi2)))
+                                cv2.arrowedLine(frame, target_pixel, phi2_end, (255, 0, 255), 2, tipLength=0.3)  # Magenta
+                                
+                                # Display PUSHING MODE phi panel on top right
+                                panel_x = img_w - 280
+                                panel_y = 10
+                                # Draw semi-transparent background rectangle for better visibility (expanded for control equation)
+                                cv2.rectangle(frame, (panel_x - 10, panel_y - 5), (img_w - 10, panel_y + 230), (0, 0, 0), -1)
+                                cv2.rectangle(frame, (panel_x - 10, panel_y - 5), (img_w - 10, panel_y + 230), (255, 255, 255), 2)
+                                # Header
+                                cv2.putText(frame, "PUSHING MODE", (panel_x, panel_y + 20), 
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)  # Yellow header
+                                # phi1 - current ball angle (cyan)
+                                cv2.putText(frame, f"phi1: {phi1_deg:+7.1f} deg", (panel_x, panel_y + 50), 
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+                                # phi2 - required angle (magenta)
+                                cv2.putText(frame, f"phi2: {phi2_deg:+7.1f} deg", (panel_x, panel_y + 75), 
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
+                                # phi - difference (green)
+                                cv2.putText(frame, f"phi:  {phi_deg:+7.1f} deg", (panel_x, panel_y + 100), 
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                                
+                                # Control equation display
+                                cv2.putText(frame, "--- Control ---", (panel_x, panel_y + 125), 
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+                                # dx equation
+                                cv2.putText(frame, f"dx: ({k1:.1f}*{dx1:+.1f})+({k2:.1f}*{dx2:+.1f})", (panel_x, panel_y + 150), 
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 100), 1)
+                                cv2.putText(frame, f"   = {dx_out:+.2f}", (panel_x, panel_y + 170), 
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 100), 2)
+                                # dy equation
+                                cv2.putText(frame, f"dy: ({k1:.1f}*{dy1:+.1f})+({k2:.1f}*{dy2:+.1f})", (panel_x, panel_y + 195), 
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 200, 255), 1)
+                                cv2.putText(frame, f"   = {dy_out:+.2f}", (panel_x, panel_y + 215), 
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 200, 255), 2)
                                 for k in end_points.keys():
                                     ep_coords = end_points.get(k)
                                     ep_pixel = (int(ep_coords[1] * img_w / grid_width), int(ep_coords[0] * img_h / grid_height))
@@ -880,288 +1019,6 @@ while True:
                 end_points = rotate_dict(end_points, k=2)
                 In_range.clear()  # Reset In_range for new endpoint assignments
                 print(f"New endpoints: {end_points}")
-    
-    # ==================== FIRE HANDLING LOOP ====================
-    while IsFire == True and not quit_flag and mode == 'auto':
-        # Capture current frame from the camera
-        ret, frame = cap.read()
-        if not ret or frame is None:
-            continue
-        
-        # Check if fire is still present
-        is_fire_detected, fire_center_pixel, fire_area = detect_fire(frame)
-        
-        if not is_fire_detected:
-            # Fire extinguished - send pump OFF and return to normal mode
-            if pump_active:
-                turret_sock.sendto(b'0', (TURRET_UDP_IP, TURRET_UDP_PORT))
-                pump_active = False
-            print("Fire extinguished! Returning to normal auto mode...")
-            IsFire = False
-            fire_target_id = None
-            turret_endpoint = None
-            pump_active = False
-            break  # Exit fire loop, outer while True will re-enter normal auto loop
-        
-        # Draw fire indicator
-        cv2.circle(frame, fire_center_pixel, 20, (0, 0, 255), 3)
-        cv2.putText(frame, "FIRE MODE!", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-        
-        # Convert to grayscale and detect markers
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
-        
-        # Single key poll
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord('q'):
-            quit_flag = True
-            break
-        if key == ord('m'):
-            mode = 'manual'
-            IsFire = False  # Exit fire mode if switching to manual
-            break
-        
-        if ids is None or len(ids) == 0:
-            draw_in_range_status(frame, In_range)
-            cv2.imshow('frame-image', frame)
-            continue
-        
-        out = aruco.drawDetectedMarkers(frame, corners, ids)
-        
-        # Find which target is closest to fire (only need to do once or when fire moves)
-        if fire_target_id is None:
-            fire_target_id = find_closest_target_to_fire(fire_center_pixel, ids, corners, end_points, frame, grid_width, grid_height)
-            if fire_target_id is not None:
-                print(f"Fire nearest to target ID {fire_target_id}")
-                # Set turret endpoint to be near the fire target
-                # Get the current position of the fire target as the turret's destination
-                fire_target_idx = np.where(ids == fire_target_id)[0]
-                if fire_target_idx.size > 0:
-                    fire_target_center = get_center(corners[fire_target_idx[0]], frame, grid_width, grid_height)
-                    # Set endpoint slightly offset (you can adjust this offset)
-                    turret_endpoint = [fire_target_center[1], fire_target_center[0]]  # [y, x] format
-                    print(f"Turret endpoint set to: {turret_endpoint}")
-        
-        # Check if turret (ID 10) and ball (ID 8) are visible
-        turret_idx = np.where(ids == turret_id)[0]
-        ball_idx = np.where(ids == ball_id)[0]
-        
-        if turret_idx.size == 0:
-            cv2.putText(frame, "Turret (ID 10) not found!", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
-            draw_in_range_status(frame, In_range)
-            cv2.imshow('frame-image', frame)
-            continue
-        
-        if ball_idx.size == 0 and ball_last_center is None:
-            cv2.putText(frame, "Ball not found!", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
-            draw_in_range_status(frame, In_range)
-            cv2.imshow('frame-image', frame)
-            continue
-        
-        # Get turret position and orientation
-        turret_center = get_center(corners[turret_idx[0]], frame, grid_width, grid_height)  # (x, y)
-        turret_forward_x, turret_forward_y = get_turret_forward_direction(corners[turret_idx[0]])
-        turret_yaw = get_2d_angle_from_corners(corners[turret_idx[0]])
-        
-        # Get ball position (use cached if not visible)
-        if ball_idx.size > 0:
-            ball_center = get_center(corners[ball_idx[0]], frame, grid_width, grid_height)
-            ball_last_center = ball_center
-            ball_last_corners = corners[ball_idx[0]].copy()
-            ball_missing_frames = 0
-        elif ball_last_center is not None and ball_missing_frames < ball_max_missing:
-            ball_center = ball_last_center
-            ball_missing_frames += 1
-        else:
-            draw_in_range_status(frame, In_range)
-            cv2.imshow('frame-image', frame)
-            continue
-        
-        # Reset grid and add obstacles (all targets 1-6 are obstacles in fire mode)
-        grid.fill(1)
-        for t in range(len(ids)):
-            m_id = int(ids[t][0])
-            if m_id in end_points.keys():  # Targets 1-6 are obstacles
-                m_center = get_center(corners[t], frame, grid_width, grid_height)
-                mask = (x_coords - m_center[0])**2 + (y_coords - m_center[1])**2 <= radius**2
-                grid[mask] = 0
-        
-        # Get image dimensions for coordinate conversion
-        img_h, img_w = frame.shape[:2]
-        
-        # Convert fire pixel position to grid coordinates
-        fire_grid_x = int(fire_center_pixel[0] / img_w * grid_width)
-        fire_grid_y = int(fire_center_pixel[1] / img_h * grid_height)
-        fire_grid_pos = (fire_grid_x, fire_grid_y)
-        
-        # ===== TURRET PATHFINDING TO FIRE =====
-        # Calculate path from turret to fire position
-        turret_start = (max(0, min(grid_height-1, int(turret_center[1]))), 
-                        max(0, min(grid_width-1, int(turret_center[0]))))  # (row, col) format
-        fire_end = (max(0, min(grid_height-1, fire_grid_y)), 
-                    max(0, min(grid_width-1, fire_grid_x)))  # (row, col) format
-        
-        path_turret2fire = tcod.path.path2d(cost=grid, start_points=[turret_start], end_points=[fire_end], cardinal=10, diagonal=14)
-        
-        # Get the direction turret needs to move (from path)
-        if len(path_turret2fire) >= 2:
-            _, turret_path_simplified = simplify_path(path_turret2fire)
-            
-            if len(turret_path_simplified) >= 2:
-                # Direction from turret to next waypoint in path
-                path_dy = turret_path_simplified[1][0] - turret_center[1]  # row direction
-                path_dx = turret_path_simplified[1][1] - turret_center[0]  # col direction
-                
-                # Normalize the path direction
-                path_length = np.sqrt(path_dx**2 + path_dy**2)
-                if path_length > 0:
-                    path_dir_x = path_dx / path_length
-                    path_dir_y = path_dy / path_length
-                else:
-                    path_dir_x, path_dir_y = 0, 0
-            else:
-                # Fallback: direct direction to fire
-                path_dx = fire_grid_x - turret_center[0]
-                path_dy = fire_grid_y - turret_center[1]
-                path_length = np.sqrt(path_dx**2 + path_dy**2)
-                if path_length > 0:
-                    path_dir_x = path_dx / path_length
-                    path_dir_y = path_dy / path_length
-                else:
-                    path_dir_x, path_dir_y = 0, 0
-        else:
-            # No path found, use direct direction to fire
-            path_dx = fire_grid_x - turret_center[0]
-            path_dy = fire_grid_y - turret_center[1]
-            path_length = np.sqrt(path_dx**2 + path_dy**2)
-            if path_length > 0:
-                path_dir_x = path_dx / path_length
-                path_dir_y = path_dy / path_length
-            else:
-                path_dir_x, path_dir_y = 0, 0
-            turret_path_simplified = []
-        
-        # Check distance from turret to fire
-        dist_to_fire = np.sqrt((turret_center[0] - fire_grid_x)**2 + (turret_center[1] - fire_grid_y)**2)
-        
-        if dist_to_fire <= 3:  # Turret close enough to fire
-            # Check if turret is facing the fire
-            angle_to_fire = np.arctan2(fire_grid_y - turret_center[1], fire_grid_x - turret_center[0])
-            turret_facing_angle = -turret_yaw + np.pi/2  # Convert to standard angle
-            
-            angle_diff = abs(angle_to_fire - turret_facing_angle)
-            angle_diff = min(angle_diff, 2*np.pi - angle_diff)  # Handle wrap-around
-            
-            if angle_diff < 0.5:  # Within ~30 degrees tolerance
-                # Turret in position and facing fire - activate pump!
-                if not pump_active:
-                    turret_sock.sendto(b'1', (TURRET_UDP_IP, TURRET_UDP_PORT))
-                    pump_active = True
-                    print("Turret in position and aimed! Pump ON!")
-                cv2.putText(frame, "PUMP ACTIVE!", (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            else:
-                cv2.putText(frame, f"Aiming... ({np.degrees(angle_diff):.1f} deg off)", (10, 180), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-        else:
-            cv2.putText(frame, f"Moving to fire... (dist: {dist_to_fire:.1f})", (10, 180),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-        
-        # ===== BALL PATHFINDING (push turret along path direction) =====
-        # Place fake target BEHIND the turret (opposite to path direction)
-        # This makes the ball push the turret in the path direction
-        # AND aligns the turret's forward with the movement direction
-        push_distance = 3
-        fake_target_x = turret_center[0] - push_distance * path_dir_x
-        fake_target_y = turret_center[1] - push_distance * path_dir_y
-        fake_target = (fake_target_x, fake_target_y)
-        
-        # Pathfinding: ball to fake target (behind turret relative to path)
-        bs = (max(0, min(grid_height-1, int(ball_center[1]))), max(0, min(grid_width-1, int(ball_center[0]))))
-        ts = (max(0, min(grid_height-1, int(fake_target[1]))), max(0, min(grid_width-1, int(fake_target[0]))))
-        
-        path_b2t = tcod.path.path2d(cost=grid, start_points=[bs], end_points=[ts], cardinal=10, diagonal=14)
-        
-        if len(path_b2t) > 0:
-            _, diagonaldown_path = simplify_path(path_b2t)
-            
-            if len(diagonaldown_path) >= 2:
-                dy = diagonaldown_path[1][0] - ball_center[1]
-                dx = diagonaldown_path[1][1] - ball_center[0]
-                
-                # Get ball yaw for sending
-                if ball_idx.size > 0:
-                    ball_yaw = get_2d_angle_from_corners(corners[ball_idx[0]])
-                elif ball_last_corners is not None:
-                    ball_yaw = get_2d_angle_from_corners(ball_last_corners)
-                else:
-                    ball_yaw = 0
-                
-                # Calculate angle from ball to turret
-                angle_b2t = np.arctan2(turret_center[1] - ball_center[1], turret_center[0] - ball_center[0])
-                
-                # Send UDP command to ball
-                next_target = np.array([dy, dx, compute_theta_send(ball_yaw), angle_b2t])
-                sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
-                print(f"Fire mode - message: {next_target}")
-        
-        # Visualization
-        img_h, img_w = frame.shape[:2]
-        
-        # Draw grid
-        for i in range(grid_height + 1):
-            y = int(round(i * img_h / grid_height))
-            cv2.line(frame, (0, y), (img_w, y), (100, 100, 100), 1)
-        for j in range(grid_width + 1):
-            x = int(round(j * img_w / grid_width))
-            cv2.line(frame, (x, 0), (x, img_h), (100, 100, 100), 1)
-        
-        # Draw turret path to fire (red dashed line effect)
-        if len(turret_path_simplified) >= 1:
-            turret_path_pixels = []
-            for point in turret_path_simplified:
-                x_pixel = int(point[1] * img_w / grid_width)
-                y_pixel = int(point[0] * img_h / grid_height)
-                turret_path_pixels.append([x_pixel, y_pixel])
-            turret_path_pixels = np.array(turret_path_pixels, dtype=np.int32)
-            cv2.polylines(frame, [turret_path_pixels], False, color=(0, 0, 255), thickness=3)  # Red for turret path
-        
-        # Draw ball path to fake target (orange)
-        if len(path_b2t) > 0 and len(diagonaldown_path) >= 1:
-            path_pixels = []
-            for point in diagonaldown_path:
-                x_pixel = int(point[1] * img_w / grid_width)
-                y_pixel = int(point[0] * img_h / grid_height)
-                path_pixels.append([x_pixel, y_pixel])
-            path_pixels = np.array(path_pixels, dtype=np.int32)
-            cv2.polylines(frame, [path_pixels], False, color=(255, 128, 0), thickness=2)  # Orange for ball path
-        
-        # Draw markers
-        ball_pixel = (int(ball_center[0] * img_w / grid_width), int(ball_center[1] * img_h / grid_height))
-        turret_pixel = (int(turret_center[0] * img_w / grid_width), int(turret_center[1] * img_h / grid_height))
-        fake_pixel = (int(fake_target[0] * img_w / grid_width), int(fake_target[1] * img_h / grid_height))
-        fire_pixel = (int(fire_grid_x * img_w / grid_width), int(fire_grid_y * img_h / grid_height))
-        
-        cv2.drawMarker(frame, ball_pixel, (0, 255, 0), cv2.MARKER_TILTED_CROSS, 40, 2)
-        cv2.drawMarker(frame, turret_pixel, (0, 128, 255), cv2.MARKER_STAR, 50, 2)  # Orange star for turret
-        cv2.drawMarker(frame, fake_pixel, (255, 0, 255), cv2.MARKER_DIAMOND, 40, 2)  # Magenta for ball's fake target
-        cv2.drawMarker(frame, fire_pixel, (0, 0, 255), cv2.MARKER_CROSS, 60, 3)  # Red cross at fire
-        cv2.putText(frame, "FIRE", (fire_pixel[0]+10, fire_pixel[1]-10), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-        
-        # Draw turret forward direction arrow
-        arrow_length = 50
-        arrow_end = (int(turret_pixel[0] + arrow_length * turret_forward_x),
-                    int(turret_pixel[1] + arrow_length * turret_forward_y))
-        cv2.arrowedLine(frame, turret_pixel, arrow_end, (0, 128, 255), 3, tipLength=0.3)
-        
-        # Draw path direction arrow (cyan - shows which way turret should move)
-        path_arrow_end = (int(turret_pixel[0] + arrow_length * path_dir_x),
-                         int(turret_pixel[1] + arrow_length * path_dir_y))
-        cv2.arrowedLine(frame, turret_pixel, path_arrow_end, (255, 255, 0), 2, tipLength=0.3)
-        
-        draw_in_range_status(frame, In_range)
-        cv2.imshow('frame-image', frame)
-    # ==================== END FIRE HANDLING LOOP ====================
         
     while mode == 'manual' and not quit_flag:
         
