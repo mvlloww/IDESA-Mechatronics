@@ -500,12 +500,12 @@ while True:
                 target_endpoint = get_endpoint_xy(end_points.get(marker_id))
                 if target_endpoint is not None:
                     ep = (int(target_endpoint[0]), int(target_endpoint[1]))
-                    path_t2e = tcod.path.path2d(cost=grid, start_points=[sp], end_points=[ep], cardinal=10, diagonal=14)
+                    path_t2e = tcod.path.path2d(cost=grid, start_points=[sp], end_points=[ep], cardinal=10, diagonal=0)
                     ball_idx = np.where(ids == ball_id)[0]
                     if ball_idx.size > 0:
                         ball_center = get_center(corners[ball_idx[0]], frame, grid_width, grid_height)
                         bs = (int(ball_center[1]), int(ball_center[0]))
-                        path_b2t = tcod.path.path2d(cost=grid, start_points=[bs], end_points=[sp], cardinal=10, diagonal=14)
+                        path_b2t = tcod.path.path2d(cost=grid, start_points=[bs], end_points=[sp], cardinal=10, diagonal=0)
                     else:
                         path_b2t = []
                     total_path = np.concatenate((path_b2t, path_t2e)) if len(path_b2t) > 0 else path_t2e
@@ -664,10 +664,11 @@ while True:
 
                             # pathfinding target to end point
                             # Clip coordinates to grid bounds
-                            ts = (max(0, min(grid_height-1, int(target_start[1]))), max(0, min(grid_width-1, int(target_start[0])))) # (x,y) -> (y,x) format
-                            endpoint_xy = get_endpoint_xy(end_points.get(keys))
-                            ep = (max(0, min(grid_height-1, int(endpoint_xy[1]))), max(0, min(grid_width-1, int(endpoint_xy[0])))) # (x,y) format
-                            path_t2e = tcod.path.path2d(cost=grid, start_points=[ts], end_points=[ep], cardinal=10, diagonal=14)
+                            ts = (max(0, min(grid_height-1, int(target_start[1]))), max(0, min(grid_width-1, int(target_start[0])))) # (x,y) -> (y,x) format for tcod
+                            endpoint_xy = get_endpoint_xy(end_points.get(keys))  # Returns (y, x) since end_points stores [y, x]
+                            ep = (max(0, min(grid_height-1, int(endpoint_xy[0]))), max(0, min(grid_width-1, int(endpoint_xy[1])))) # Already (y,x), keep as (y,x) for tcod
+                            print(f"DEBUG: Target start (y,x): {ts}, Endpoint (y,x): {ep}")
+                            path_t2e = tcod.path.path2d(cost=grid, start_points=[ts], end_points=[ep], cardinal=10, diagonal=0)
                             
                             # ===== CALCULATE PHI BEFORE MODE DECISION =====
                             # Simplify path for phi2 calculation
@@ -760,7 +761,7 @@ while True:
                                 # Clip coordinates to grid bounds
                                 bs = (max(0, min(grid_height-1, int(ball_start[1]))), max(0, min(grid_width-1, int(ball_start[0]))))
                                 ts = (max(0, min(grid_height-1, int(fake_target[1]))), max(0, min(grid_width-1, int(fake_target[0]))))
-                                path_b2t = tcod.path.path2d(cost=grid, start_points=[bs], end_points=[ts], cardinal=10, diagonal=14)
+                                path_b2t = tcod.path.path2d(cost=grid, start_points=[bs], end_points=[ts], cardinal=10, diagonal=0)
                                 # tcod can return an empty array; guard simplify_path
                                 if len(path_b2t) > 0:
                                     _, diagonaldown_path_b2t = simplify_path(path_b2t)
