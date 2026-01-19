@@ -1,3 +1,5 @@
+# source ./IDESA/bin/activate
+
 def get_endpoint_xy(endpoint_value):
     """Return endpoint as (x, y) ints. Supports [[x, y], flag], [x, y], (x, y), np.ndarray."""
     if endpoint_value is None:
@@ -355,6 +357,7 @@ import tcod
 import os
 import socket   #communicate over the network
 import struct
+import math
 
 
 ''' ====================== CONFIGURATION CONSTANTS ====================== '''
@@ -869,10 +872,15 @@ while True:
                                         # Use 2D corner-based angle (ignores tilt/pitch)
                                         yaw = get_2d_angle_from_corners(ball_corners_for_yaw)
                                         ball_last_yaw = yaw  # Update cached yaw
-                                        # Multiply by ball-to-target path length for speed scaling
-                                        path_length_b2t = len(path_b2t) * PATH_LENGTH_MULTIPLIER
-                                        dx_scaled = dx * path_length_b2t
-                                        dy_scaled = dy * path_length_b2t
+                                        # Normalize direction and scale by path length
+                                        path_length_b2t = len(path_b2t)
+                                        scaler = math.sqrt(dx**2 + dy**2)
+                                        if scaler > 0:
+                                            dx_scaled = dx / scaler * path_length_b2t
+                                            dy_scaled = dy / scaler * path_length_b2t
+                                        else:
+                                            dx_scaled = 0
+                                            dy_scaled = 0
                                         # UDP sending
                                         next_target = np.array([dy_scaled, dx_scaled, compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
                                         sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
@@ -1050,10 +1058,15 @@ while True:
                                     yaw = get_2d_angle_from_corners(ball_corners_for_yaw)
                                     ball_last_yaw = yaw  # Update cached yaw
 
-                                    # Multiply by target-to-endpoint path length for speed scaling
-                                    path_length_t2e = len(path_t2e) * PATH_LENGTH_MULTIPLIER
-                                    dx_out_scaled = dx_out * path_length_t2e
-                                    dy_out_scaled = dy_out * path_length_t2e
+                                    # Normalize direction and scale by path length
+                                    path_length_t2e = len(path_t2e)
+                                    scaler = math.sqrt(dx_out**2 + dy_out**2)
+                                    if scaler > 0:
+                                        dx_out_scaled = dx_out / scaler * path_length_t2e
+                                        dy_out_scaled = dy_out / scaler * path_length_t2e
+                                    else:
+                                        dx_out_scaled = 0
+                                        dy_out_scaled = 0
                                     # UDP sending with combined control output
                                     next_target = np.array([dy_out_scaled, dx_out_scaled, compute_theta_send(yaw), angle_b2t])
                                     sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
