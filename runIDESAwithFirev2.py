@@ -1335,65 +1335,27 @@ while True:
                         else:
                             fire_corners_for_fake = fire_last_corners
                         if fire_corners_for_fake is not None:
-                            # Use rvecs/tvecs to project the real-world top corners of the marker
-                            fire_idx = None
-                            if ids is not None and IsFire_id in ids:
-                                idxs = np.where(ids == IsFire_id)[0]
-                                if len(idxs) > 0:
-                                    fire_idx = idxs[0]
-                            if fire_idx is not None and 'rvecs' in locals() and 'tvecs' in locals():
-                                rvec = rvecs[fire_idx][0]
-                                tvec = tvecs[fire_idx][0]
-                                marker_length = 40  # mm
-                                # Define top-left and top-right in marker coordinate system
-                                top_left_3d = np.array([[0, 0, 0]], dtype=np.float32)
-                                top_right_3d = np.array([[marker_length, 0, 0]], dtype=np.float32)
-                                img_pts_left, _ = cv2.projectPoints(top_left_3d, rvec, tvec, CM, dist_coef)
-                                img_pts_right, _ = cv2.projectPoints(top_right_3d, rvec, tvec, CM, dist_coef)
-                                img_h, img_w = frame.shape[:2]
-                                # Midpoint in image
-                                top_middle_px = (img_pts_left[0][0] + img_pts_right[0][0]) / 2
-                                # Convert to grid coordinates
-                                top_middle_grid_x = top_middle_px[0] * grid_width / img_w
-                                top_middle_grid_y = top_middle_px[1] * grid_height / img_h
-                                center_fire_grid_x = center_fire[0]
-                                center_fire_grid_y = center_fire[1]
-                                # Direction vector from center to projected top edge midpoint
-                                dir_x = top_middle_grid_x - center_fire_grid_x
-                                dir_y = top_middle_grid_y - center_fire_grid_y
-                                vec_norm = np.sqrt(dir_x**2 + dir_y**2)
-                                if vec_norm != 0:
-                                    dir_x /= vec_norm
-                                    dir_y /= vec_norm
-                                else:
-                                    dir_x, dir_y = 0, -1
-                                fake_fire_x = center_fire_grid_x + 5 * dir_x
-                                fake_fire_y = center_fire_grid_y + 5 * dir_y
-                                fake_fire = (fake_fire_x, fake_fire_y)
-                                print(f"Fake fire location (5 grid away, real-world top edge direction): {fake_fire}")
+                            fire_pts = fire_corners_for_fake.reshape((4, 2))
+                            top_left = fire_pts[0]
+                            top_right = fire_pts[1]
+                            top_middle_px = (top_left + top_right) / 2
+                            img_h, img_w = frame.shape[:2]
+                            top_middle_grid_x = top_middle_px[0] * grid_width / img_w
+                            top_middle_grid_y = top_middle_px[1] * grid_height / img_h
+                            center_fire_grid_x = center_fire[0]
+                            center_fire_grid_y = center_fire[1]
+                            dir_x = top_middle_grid_x - center_fire_grid_x
+                            dir_y = top_middle_grid_y - center_fire_grid_y
+                            vec_norm = np.sqrt(dir_x**2 + dir_y**2)
+                            if vec_norm != 0:
+                                dir_x /= vec_norm
+                                dir_y /= vec_norm
                             else:
-                                # Fallback to 2D corners if pose not available
-                                fire_pts = fire_corners_for_fake.reshape((4, 2))
-                                top_left = fire_pts[0]
-                                top_right = fire_pts[1]
-                                top_middle_px = (top_left + top_right) / 2
-                                img_h, img_w = frame.shape[:2]
-                                top_middle_grid_x = top_middle_px[0] * grid_width / img_w
-                                top_middle_grid_y = top_middle_px[1] * grid_height / img_h
-                                center_fire_grid_x = center_fire[0]
-                                center_fire_grid_y = center_fire[1]
-                                dir_x = top_middle_grid_x - center_fire_grid_x
-                                dir_y = top_middle_grid_y - center_fire_grid_y
-                                vec_norm = np.sqrt(dir_x**2 + dir_y**2)
-                                if vec_norm != 0:
-                                    dir_x /= vec_norm
-                                    dir_y /= vec_norm
-                                else:
-                                    dir_x, dir_y = 0, -1
-                                fake_fire_x = center_fire_grid_x + 5 * dir_x
-                                fake_fire_y = center_fire_grid_y + 5 * dir_y
-                                fake_fire = (fake_fire_x, fake_fire_y)
-                                print(f"Fake fire location (5 grid away, fallback 2D): {fake_fire}")
+                                dir_x, dir_y = 0, -1
+                            fake_fire_x = center_fire_grid_x + 5 * dir_x
+                            fake_fire_y = center_fire_grid_y + 5 * dir_y
+                            fake_fire = (fake_fire_x, fake_fire_y)
+                            print(f"Fake fire location (5 grid away, 2D top edge direction): {fake_fire}")
                         else:
                             fake_fire = center_fire  # fallback
                             print("Fake fire fallback: using center_fire as fake_fire (no corners available)")
