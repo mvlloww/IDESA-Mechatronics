@@ -38,6 +38,73 @@ def draw_in_range_status(frame, in_range_dict):
         cv2.putText(frame, line, (10, y_pos), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)  # Green text
 
+def draw_wasd_keys(frame, pressed_key=None, dy=0, dx=0):
+    """Draw WASD key visual on bottom right of frame. Highlight pressed key and show dx/dy values."""
+    img_h, img_w = frame.shape[:2]
+    
+    # Key box dimensions
+    key_size = 50
+    gap = 5
+    
+    # Position (bottom right)
+    base_x = img_w - (3 * key_size + 2 * gap) - 20  # 3 keys wide
+    base_y = img_h - (2 * key_size + gap) - 60      # 2 keys tall + space for text
+    
+    # Key positions: W on top, A-S-D on bottom row
+    keys = {
+        'W': (base_x + key_size + gap, base_y),
+        'A': (base_x, base_y + key_size + gap),
+        'S': (base_x + key_size + gap, base_y + key_size + gap),
+        'D': (base_x + 2 * (key_size + gap), base_y + key_size + gap)
+    }
+    
+    # Colors
+    color_normal = (80, 80, 80)      # Dark gray
+    color_pressed = (0, 255, 0)      # Green when pressed
+    color_text = (255, 255, 255)     # White text
+    
+    # Draw each key
+    for key_char, (kx, ky) in keys.items():
+        # Check if this key is pressed
+        is_pressed = (pressed_key == key_char.lower())
+        box_color = color_pressed if is_pressed else color_normal
+        thickness = -1 if is_pressed else 2  # Filled if pressed, outline if not
+        
+        # Draw key box
+        cv2.rectangle(frame, (kx, ky), (kx + key_size, ky + key_size), box_color, thickness)
+        if not is_pressed:
+            # Draw filled dark background for non-pressed keys
+            cv2.rectangle(frame, (kx + 2, ky + 2), (kx + key_size - 2, ky + key_size - 2), (40, 40, 40), -1)
+        
+        # Draw key letter
+        text_color = (0, 0, 0) if is_pressed else color_text
+        text_x = kx + key_size // 2 - 10
+        text_y = ky + key_size // 2 + 10
+        cv2.putText(frame, key_char, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, text_color, 2)
+    
+    # Draw dx/dy values below the keys
+    value_y = base_y + 2 * (key_size + gap) + 25
+    
+    # Show which value is active based on pressed key
+    if pressed_key in ['w', 's']:
+        value_text = f"dy = {int(dy)}"
+        value_color = (0, 255, 255)  # Yellow for dy
+    elif pressed_key in ['a', 'd']:
+        value_text = f"dx = {int(dx)}"
+        value_color = (255, 255, 0)  # Cyan for dx
+    else:
+        value_text = "dx=0  dy=0"
+        value_color = (150, 150, 150)  # Gray when idle
+    
+    # Draw value text with outline
+    cv2.putText(frame, value_text, (base_x, value_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 3)
+    cv2.putText(frame, value_text, (base_x, value_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, value_color, 2)
+    
+    # Draw "MANUAL MODE" label
+    label_y = base_y - 15
+    cv2.putText(frame, "MANUAL MODE", (base_x, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3)
+    cv2.putText(frame, "MANUAL MODE", (base_x, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
+
 def simplify_path(path):
 
     '''
@@ -742,7 +809,8 @@ while True:
                             # Enter pushing mode only if ball is close AND properly aligned
                             if not (ball_is_close and phi_is_aligned):
                                 # BALL-TO-TARGET MODE - ball needs to get closer or better aligned
-                                print(f"BALL-TO-TARGET MODE - close: {ball_is_close}, phi: {np.degrees(phi_for_mode) if phi_for_mode else 'N/A':.1f}° (threshold: ±{phi_threshold_deg}°)")
+                                phi_str = f"{np.degrees(phi_for_mode):.1f}" if phi_for_mode is not None else "N/A"
+                                print(f"BALL-TO-TARGET MODE - close: {ball_is_close}, phi: {phi_str}° (threshold: ±{phi_threshold_deg}°)")
                                 # Set target to obstacle
                                 mask = (x_coords - target_start[0])**2 + (y_coords - target_start[1])**2 <= radius**2
                                 grid[mask] = 0
@@ -1124,6 +1192,11 @@ while True:
                 In_range.clear()  # Reset In_range for new endpoint assignments
                 print(f"New endpoints: {end_points}")
         
+    # Manual mode key hold state
+    manual_last_key = None
+    manual_last_key_time = 0
+    manual_key_timeout = 0.5  # Hold key for 0.5 seconds after last press
+    
     while mode == 'manual' and not quit_flag:
         
         # Capture current frame from the camera
@@ -1147,35 +1220,59 @@ while True:
 
         # Check for 'awsd' key press for manual control
         key = cv2.waitKey(1) & 0xFF
-        next_target = None
+        current_time = time.perf_counter()
+        
+        # Check if a movement key was pressed this frame
+        new_key_pressed = None
         if key == ord('w'):
-            print ('direction = up')
-            next_target = np.array([50, 0, compute_theta_send(yaw), 0])
-            
+            new_key_pressed = 'w'
         elif key == ord('a'):
-            print ('direction = left')
-            next_target = np.array([0, 50, compute_theta_send(yaw), 0])
+            new_key_pressed = 'a'
         elif key == ord('s'):
-            print ('direction = down')
-            next_target = np.array([-50, 0, compute_theta_send(yaw), 0])
-
+            new_key_pressed = 's'
         elif key == ord('d'):
-            print ('direction = right')
-            next_target = np.array([0, -50, compute_theta_send(yaw), 0])
+            new_key_pressed = 'd'
         elif key == ord('q'):
             quit_flag = True
             break
-        elif key == ord('c'): # c to change back to auto mode
+        elif key == ord('c'):  # c to change back to auto mode
             mode = 'auto'
-            print ("Auto mode activated: normal operation")
+            print("Auto mode activated: normal operation")
             break
-
-        # Default to zero command when no movement key was pressed
-        if next_target is None:
+        
+        # Update held key if new key pressed
+        if new_key_pressed is not None:
+            manual_last_key = new_key_pressed
+            manual_last_key_time = current_time
+        
+        # Determine active key (use held key if within timeout)
+        if manual_last_key is not None and (current_time - manual_last_key_time) < manual_key_timeout:
+            pressed_key = manual_last_key
+        else:
+            pressed_key = None
+            manual_last_key = None  # Clear held key after timeout
+        
+        # Set next_target based on active key
+        if pressed_key == 'w':
+            print('direction = up')
+            next_target = np.array([-50, 0, compute_theta_send(yaw), 0])  # dy negative (up)
+        elif pressed_key == 'a':
+            print('direction = left')
+            next_target = np.array([0, -50, compute_theta_send(yaw), 0])  # dx negative (left)
+        elif pressed_key == 's':
+            print('direction = down')
+            next_target = np.array([50, 0, compute_theta_send(yaw), 0])   # dy positive (down)
+        elif pressed_key == 'd':
+            print('direction = right')
+            next_target = np.array([0, 50, compute_theta_send(yaw), 0])   # dx positive (right)
+        else:
             next_target = np.array([0, 0, compute_theta_send(yaw), 0])
-            print ('no movement key pressed')
+            print('no movement key pressed')
 
         sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
+        
+        # Draw WASD visual (only in manual mode)
+        draw_wasd_keys(frame, pressed_key=pressed_key, dy=next_target[0], dx=next_target[1])
         draw_in_range_status(frame, In_range)
         cv2.imshow('frame-image', frame)
 
