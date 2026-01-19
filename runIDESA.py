@@ -154,8 +154,6 @@ def simplify_path(path):
     diagonaldown_path.append(cardinal_path[-1])
 
     diagonaldown_path = np.array(diagonaldown_path)
-    
-    ## deals with rising diagonal segments
 
     return cardinal_path, diagonaldown_path
 def get_center(corners, frame, grid_width, grid_height):
@@ -207,11 +205,6 @@ def grid_obstacle(ids, corners, target_id, x_coords, y_coords, grid, radius, fra
             oy_pixel = int(oy * img_h / grid_height)
             radius_pixel = int(radius * img_w / grid_width)
             cv2.circle(frame, (ox_pixel, oy_pixel), radius_pixel, (0,0,255), 2)
-        # # Enforce boundary: x=1,39 and y=1,19 to zeros
-        # grid[0, :] = 0         # y=1 (row 0)
-        # grid[-1, :] = 0        # y=19 (row 19)
-        # grid[:, 0] = 0         # x=1 (col 0)
-        # grid[:, -1] = 0        # x=39 (col 39)
     return grid
 def rotate_dict(d, k=1):
     """
@@ -234,22 +227,7 @@ def compute_theta_send(theta):
     theta_send = -theta
     return theta_send
 def bouncing_ball(dy, dx, ball_start):
-    '''
-    bouncing ball function
-
-    input: dy, dx (grid movement instructions), ball start position
-    output: adjusted dy, dx to simulate bouncing effect
-    '''
-    # ball_x = ball_start[0] + dx
-    # ball_y = ball_start[1] + dy
-    # if ball_x <=1:
-    #     dx = -19
-    # elif ball_x>=39:
-    #     dx = 19
-    # if ball_y <=1:
-    #     dy = 9
-    # elif ball_y>=19:
-    #     dy = -9
+    '''bouncing ball function - placeholder for boundary handling'''
     return dy, dx
 
 def get_2d_angle_from_corners(corners):
@@ -372,14 +350,60 @@ import numpy as np
 import time
 # This is the ArUco library for fiducial markers
 import cv2.aruco as aruco
-# This is a library for plotting and visualizing data
-import matplotlib.pyplot as plt
 # This is a library for roguelike game development (used for pathfinding)
 import tcod
 import os
-import numpy as np
 import socket   #communicate over the network
 import struct
+
+
+''' ====================== CONFIGURATION CONSTANTS ====================== '''
+# === ArUco Marker Settings ===
+MARKER_SIZE = 40                    # ArUco marker size in mm
+BALL_ID = 8                         # Ball ArUco marker ID
+END_POINTS = {2:[16,10], 4:[6,30]}  # Target endpoints {marker_id: [y, x]}
+
+# === Grid Settings ===
+GRID_HEIGHT = 20                    # Grid rows
+GRID_WIDTH = 40                     # Grid columns
+OBSTACLE_RADIUS = 1.5               # Radius around obstacles (grid units)
+
+# === Camera Settings ===
+CAMERA_WIDTH = 1920                 # Camera resolution width
+CAMERA_HEIGHT = 1080                # Camera resolution height
+INITIAL_EXPOSURE = -10              # Initial exposure value (-13 to 0)
+
+# === UDP Communication ===
+UDP_IP = "138.38.229.206"           # Raspberry Pi IP address
+UDP_PORT = 50000                    # UDP port number
+
+# === Ball Tracking ===
+BALL_CACHE_TIMEOUT = 0.5            # Seconds before ball cache expires
+TARGET_CACHE_TIMEOUT = 0.5          # Seconds before target cache expires
+
+# === Pathfinding & Control ===
+BALL_TARGET_DISTANCE = 3            # Distance threshold for pushing mode
+PHI_THRESHOLD_DEG = 30              # Phi alignment threshold (degrees)
+ATTACK_DISTANCE = 3                 # Distance ball approaches from opposite side
+K1_PUSH_GAIN = 1.0                  # Gain for pushing direction
+K2_PHI_GAIN = 0.5                   # Gain for phi correction
+PATH_LENGTH_MULTIPLIER = 1.0        # Multiplier for path length speed scaling (1.0 = use raw path length)
+
+# === Manual Mode ===
+MANUAL_KEY_TIMEOUT = 0.5            # Key hold timeout (seconds)
+MANUAL_MOVE_SPEED = 50              # Movement magnitude for WASD controls
+
+# === ArUco Detection Tuning ===
+ARUCO_MIN_PERIMETER_RATE = 0.01     # Lower = detect smaller markers (default 0.03)
+ARUCO_MAX_PERIMETER_RATE = 4.0
+ARUCO_THRESH_WIN_MIN = 3
+ARUCO_THRESH_WIN_MAX = 23
+ARUCO_THRESH_WIN_STEP = 10
+ARUCO_THRESH_CONSTANT = 7
+ARUCO_CORNER_REFINE_WIN = 5
+ARUCO_CORNER_REFINE_ITER = 30
+ARUCO_ERROR_CORRECTION = 0.6
+''' ===================================================================== '''
 
 
 '''Initiate camera parameters'''
@@ -394,36 +418,29 @@ CM = Camera['CM']
 # Get the distortion coefficients
 dist_coef = Camera['dist_coef']
 
-# Define the size of the aruco marker in mm
-marker_size = 40
 # Define the aruco dictionary
 aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
 # Define the aruco detection parameters (tuned for distant markers)
 parameters = aruco.DetectorParameters()
-# For distant/small markers - lower the minimum perimeter rate
-parameters.minMarkerPerimeterRate = 0.01  # Default 0.03, lower = detect smaller markers
-parameters.maxMarkerPerimeterRate = 4.0
-# Adaptive thresholding - more robust to lighting variations
-parameters.adaptiveThreshWinSizeMin = 3
-parameters.adaptiveThreshWinSizeMax = 23
-parameters.adaptiveThreshWinSizeStep = 10
-parameters.adaptiveThreshConstant = 7
-# Corner refinement for more stable detection
+parameters.minMarkerPerimeterRate = ARUCO_MIN_PERIMETER_RATE
+parameters.maxMarkerPerimeterRate = ARUCO_MAX_PERIMETER_RATE
+parameters.adaptiveThreshWinSizeMin = ARUCO_THRESH_WIN_MIN
+parameters.adaptiveThreshWinSizeMax = ARUCO_THRESH_WIN_MAX
+parameters.adaptiveThreshWinSizeStep = ARUCO_THRESH_WIN_STEP
+parameters.adaptiveThreshConstant = ARUCO_THRESH_CONSTANT
 parameters.cornerRefinementMethod = aruco.CORNER_REFINE_SUBPIX
-parameters.cornerRefinementWinSize = 5
-parameters.cornerRefinementMaxIterations = 30
-# Error correction - helps with partially obscured markers
-parameters.errorCorrectionRate = 0.6
+parameters.cornerRefinementWinSize = ARUCO_CORNER_REFINE_WIN
+parameters.cornerRefinementMaxIterations = ARUCO_CORNER_REFINE_ITER
+parameters.errorCorrectionRate = ARUCO_ERROR_CORRECTION
 
 # CAP_DSHOW
 cap = cv2.VideoCapture(0)
-# cap.set(cv2.CAP_PROP_FRAME_WIDTH, 2750)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
 
 # Exposure control settings
-exposure_value = -10  # Starting exposure (range typically -13 to 0, lower = darker/faster)
-cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)  # Disable auto-exposure (0.25 or 1 depending on camera)
+exposure_value = INITIAL_EXPOSURE
+cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)  # Disable auto-exposure
 cap.set(cv2.CAP_PROP_EXPOSURE, exposure_value)
 print(f"Initial exposure set to: {exposure_value}")
 
@@ -433,49 +450,36 @@ cv2.namedWindow("frame-image", cv2.WINDOW_NORMAL)
 cv2.moveWindow("frame-image",0,100)
 
 '''Initiate grid for pathfinding'''
-# Create a 20x40 grid all initialized to 1
-grid = np.ones((20,40),np.int8)
-# Detect set height and width of grid
+# Create grid all initialized to 1
+grid = np.ones((GRID_HEIGHT, GRID_WIDTH), np.int8)
 grid_height, grid_width = grid.shape
-# Define the 3D coordinates of the center of the marker in its own coordinate system
-# Output marker center is at the corner of the marker so need this
-half = marker_size / 2
-center_3d = np.array([[half, half, 0]], dtype=np.float32)
 
 # Precompute grid coordinates for masking
 y_coords, x_coords = np.ogrid[:grid_height, :grid_width]
-# Define the radius around the center of obstacle (can calibrate)
-radius = 1.5
 
-# Set target end points for pathfinding (can be changed later)
-# end_points = {1:[16,6], 2:[16,10], 3:[4,16], 4:[4,24], 5:[16,32], 6:[16,36]}
-end_points = {2:[16,10], 4:[6,30], 6:[16,36]}
-# Set ball ArUco id
-ball_id = 8
-# Create id_buffer dictionary
-id_buffer = {}
+# Working copies of config (can be modified at runtime)
+end_points = END_POINTS.copy()
+ball_id = BALL_ID
+radius = OBSTACLE_RADIUS
 
 # Ball detection temporal smoothing
 ball_last_corners = None  # Last known ball corners
 ball_last_center = None   # Last known ball center (grid coords)
 ball_last_yaw = 0.0       # Last known ball yaw angle
-ball_missing_frames = 0   # Counter for frames ball has been missing
-ball_max_missing = 5      # Max frames to keep using last known position
+ball_last_seen_time = None  # Timestamp when ball was last detected
+ball_cache_timeout = BALL_CACHE_TIMEOUT
 
-# Target detection temporal smoothing (3 second timeout)
+# Target detection temporal smoothing
 target_last_center = None      # Last known target center (grid coords)
 target_last_corners = None     # Last known target corners
 target_last_seen_time = None   # Timestamp when target was last detected
-target_cache_timeout = 3.0     # Seconds before switching to new target
+target_cache_timeout = TARGET_CACHE_TIMEOUT
 
 '''Temporary variables'''
 quit_flag = False
 mode = 'auto'  # can be 'auto' or 'manual'
 
 ''' Setup UDP communication '''
-# Ball control UDP
-UDP_IP = "138.38.229.206" #clearpass IP address for RPI 3B Model +
-UDP_PORT = 50000
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 # Crop Rotation True/False
@@ -483,8 +487,6 @@ In_range = {}
 
 ''' Main loop '''
 while True:
-    # Start the performance clock
-    start = time.perf_counter()
     quit_flag = False
 
     while not quit_flag and mode == 'auto':
@@ -498,7 +500,7 @@ while True:
         # Convert the image from the camera to Gray scale
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         # Detect ArUco markers in the grey image
-        corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)  
+        corners, ids, _ = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)  
         draw_in_range_status(frame, In_range)
         cv2.imshow('frame-image', frame)
         
@@ -529,7 +531,7 @@ while True:
             # Draw detected markers on the frame
             out = aruco.drawDetectedMarkers(frame, corners, ids)
             # Calculate the pose of each detected marker
-            rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, marker_size, CM, dist_coef)
+            rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, MARKER_SIZE, CM, dist_coef)
 
             # Reset grid for pathfinding
             grid.fill(1)
@@ -566,11 +568,6 @@ while True:
 
                 # Get center of target ArUco code on grid
                 start_point = marker_center
-                #print("1. Start Point for ID ", marker_id, ": ", start_point)
-
-                # append start points and id[t] to id_buffer
-                if marker_id not in id_buffer:
-                    id_buffer[marker_id] = start_point
 
                 # Get path from target to end point and ball to target
                 # tcod.path.path2d expects sequences of (i,j) pairs
@@ -608,7 +605,7 @@ while True:
                         continue
 
                     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                    corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
+                    corners, ids, _ = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
                     
                     # refresh grid
                     grid.fill(1)
@@ -658,12 +655,12 @@ while True:
                     ball_visible = ids is not None and len(ids) > 0 and ball_id in ids.flatten()
                     
                     if target_position_available and ball_visible:
-                        # Ball detected - update tracking
-                        ball_missing_frames = 0
+                        # Ball detected - update tracking and timestamp
+                        ball_last_seen_time = time.perf_counter()
                         ball_idx_temp = np.where(ids == ball_id)[0][0]
                         ball_last_corners = corners[ball_idx_temp].copy()
                         out = aruco.drawDetectedMarkers(frame, corners, ids)
-                        rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, marker_size, CM, dist_coef)
+                        rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, MARKER_SIZE, CM, dist_coef)
                         # Get target center - use detected if visible, otherwise use cached
                         if target_visible:
                             center_key = get_center(corners[np.where(ids==keys)[0][0]], frame, grid_width, grid_height)
@@ -674,14 +671,14 @@ while True:
                         # Print grid positions of ball and target
                         cached_str = "" if target_visible else " (CACHED)"
                         print(f"Ball (ID {ball_id}) grid position: {center_ball}, Target (ID {keys}) grid position{cached_str}: {center_key}")
-                    elif target_position_available and ball_last_center is not None and ball_missing_frames < ball_max_missing:
-                        # Ball NOT detected but we have recent data - use last known position
-                        ball_missing_frames += 1
-                        print(f"Ball missing frame {ball_missing_frames}/{ball_max_missing} - using last known position")
+                    elif target_position_available and ball_last_center is not None and ball_last_seen_time is not None and (time.perf_counter() - ball_last_seen_time) < ball_cache_timeout:
+                        # Ball NOT detected but cache is still valid - use last known position
+                        time_since_ball_seen = time.perf_counter() - ball_last_seen_time
+                        print(f"Ball not visible - using cached position ({time_since_ball_seen:.2f}s / {ball_cache_timeout}s)")
                         # Only draw markers if there are any detected
                         if ids is not None and len(ids) > 0:
                             out = aruco.drawDetectedMarkers(frame, corners, ids)
-                            rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, marker_size, CM, dist_coef)
+                            rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, MARKER_SIZE, CM, dist_coef)
                         # Get target center - use detected if visible, otherwise use cached
                         if target_visible:
                             center_key = get_center(corners[np.where(ids==keys)[0][0]], frame, grid_width, grid_height)
@@ -692,13 +689,12 @@ while True:
                         target_cached_str = "" if target_visible else " (CACHED)"
                         print(f"Ball (ID {ball_id}) grid position (CACHED): {center_ball}, Target (ID {keys}) grid position{target_cached_str}: {center_key}")
                     else:
-                        # Ball not detected and cache expired - reset cache and wait for ball
-                        if ball_missing_frames >= ball_max_missing:
-                            # Cache expired - reset so fresh detection can work
-                            print(f"Ball cache expired - waiting for ball detection...")
-                            ball_missing_frames = 0  # Reset counter for next detection cycle
-                        elif ball_last_corners is not None:
-                            ball_missing_frames += 1
+                        # Ball not detected and cache expired or unavailable
+                        if ball_last_seen_time is not None:
+                            time_since_ball_seen = time.perf_counter() - ball_last_seen_time
+                            print(f"Ball cache expired ({time_since_ball_seen:.2f}s) - waiting for ball detection...")
+                        else:
+                            print(f"Ball not detected - no cached position available...")
                         draw_in_range_status(frame, In_range)
                         cv2.imshow('frame-image', frame)
                         continue
@@ -718,7 +714,6 @@ while True:
                         # Get angle of ball to target
                         angle_b2t = np.arctan2(center_key[1]-center_ball[1], center_key[0]-center_ball[0])
                         
-                        # cv2.imshow('frame-image', frame)
                         # Check if target reached endpoint (with tolerance)
                         target_endpoint = end_points.get(keys)  # [y, x]
                         endpoint_x = target_endpoint[1]
@@ -730,7 +725,6 @@ while True:
                             In_range[keys] = True
                             print(f"Target ID {keys} reached endpoint!")
                             break
-                            #print ("3. Target ID ", keys, " reached endpoint. switching to next target."))
 
                         # Only update obstacles if we have detected markers
                         if ids is not None and len(ids) > 0:
@@ -798,19 +792,15 @@ while True:
                                 # Calculate phi (angular difference)
                                 phi_for_mode = compute_phi(phi1_pre, phi2_pre)
                             
-                            # Mode switching thresholds
-                            ballTarget_distance = 2  # Distance threshold (still needed)
-                            phi_threshold_deg = 45   # Phi threshold in degrees
-                            
                             # Check if ball is close enough AND phi is within threshold for pushing mode
-                            ball_is_close = abs(ball_start[0] - target_start[0]) <= ballTarget_distance and abs(ball_start[1] - target_start[1]) <= ballTarget_distance
-                            phi_is_aligned = phi_for_mode is not None and abs(np.degrees(phi_for_mode)) <= phi_threshold_deg
+                            ball_is_close = abs(ball_start[0] - target_start[0]) <= BALL_TARGET_DISTANCE and abs(ball_start[1] - target_start[1]) <= BALL_TARGET_DISTANCE
+                            phi_is_aligned = phi_for_mode is not None and abs(np.degrees(phi_for_mode)) <= PHI_THRESHOLD_DEG
                             
                             # Enter pushing mode only if ball is close AND properly aligned
                             if not (ball_is_close and phi_is_aligned):
                                 # BALL-TO-TARGET MODE - ball needs to get closer or better aligned
                                 phi_str = f"{np.degrees(phi_for_mode):.1f}" if phi_for_mode is not None else "N/A"
-                                print(f"BALL-TO-TARGET MODE - close: {ball_is_close}, phi: {phi_str}° (threshold: ±{phi_threshold_deg}°)")
+                                print(f"BALL-TO-TARGET MODE - close: {ball_is_close}, phi: {phi_str}° (threshold: ±{PHI_THRESHOLD_DEG}°)")
                                 # Set target to obstacle
                                 mask = (x_coords - target_start[0])**2 + (y_coords - target_start[1])**2 <= radius**2
                                 grid[mask] = 0
@@ -822,11 +812,10 @@ while True:
                                 radius_pixel = int(radius * img_w / grid_width)
                                 cv2.circle(frame, (ox_pixel, oy_pixel), radius_pixel, (0,0,255), 2)
 
-                                # Threshold vector to determine attack angle onto target
-                                attackThreshold = 3
-                                push_distance = attackThreshold  # adjust as needed
-
                                 # Determine fake target position opposite to endpoint
+                                push_distance = ATTACK_DISTANCE
+
+                                # Use endpoint directly if path is too short to get direction
                                 # Use endpoint directly if path is too short to get direction
                                 if len(path_t2e) >= 2:
                                     # Vector from target to next waypoint (direction to endpoint)
@@ -856,7 +845,6 @@ while True:
                                     _, diagonaldown_path_b2t = simplify_path(path_b2t)
                                 else:
                                     diagonaldown_path_b2t = []
-                                #print('6. target id', keys, "path_b2t:", diagonaldown_path_b2t)
 
                                 # Check if path has at least 2 points before accessing [1]
                                 if len(diagonaldown_path_b2t) > 0:
@@ -882,7 +870,7 @@ while True:
                                         yaw = get_2d_angle_from_corners(ball_corners_for_yaw)
                                         ball_last_yaw = yaw  # Update cached yaw
                                         # Multiply by ball-to-target path length for speed scaling
-                                        path_length_b2t = len(path_b2t)
+                                        path_length_b2t = len(path_b2t) * PATH_LENGTH_MULTIPLIER
                                         dx_scaled = dx * path_length_b2t
                                         dy_scaled = dy * path_length_b2t
                                         # UDP sending
@@ -952,7 +940,7 @@ while True:
                                 cv2.imshow('frame-image', frame)
                             else:
                                 # PUSHING MODE - ball is close AND properly aligned (phi within threshold)
-                                print(f"PUSHING MODE - phi: {np.degrees(phi_for_mode):.1f}° (within ±{phi_threshold_deg}°)")
+                                print(f"PUSHING MODE - phi: {np.degrees(phi_for_mode):.1f}° (within ±{PHI_THRESHOLD_DEG}°)")
                                 # Reuse the pre-calculated simplified path
                                 diagonaldown_path_t2e = diagonaldown_path_t2e_pre
 
@@ -1010,9 +998,8 @@ while True:
                                 print(f"PUSHING MODE - phi1: {np.degrees(phi1):.1f}°, phi2: {np.degrees(phi2):.1f}°, phi: {np.degrees(phi):.1f}°")
                                 
                                 # ===== CONTROL SYSTEM FOR BALL MOVEMENT =====
-                                # Control gains (tune these values)
-                                k1 = 1.0  # Gain for pushing direction (towards waypoint)
-                                k2 = 0.5  # Gain for phi correction (repositioning around target)
+                                k1 = K1_PUSH_GAIN
+                                k2 = K2_PHI_GAIN
                                 
                                 # dx1, dy1: Direction to push target towards waypoint
                                 dy1 = diagonaldown_path_t2e[1][0] - target_start[1]
@@ -1064,7 +1051,7 @@ while True:
                                     ball_last_yaw = yaw  # Update cached yaw
 
                                     # Multiply by target-to-endpoint path length for speed scaling
-                                    path_length_t2e = len(path_t2e)
+                                    path_length_t2e = len(path_t2e) * PATH_LENGTH_MULTIPLIER
                                     dx_out_scaled = dx_out * path_length_t2e
                                     dy_out_scaled = dy_out * path_length_t2e
                                     # UDP sending with combined control output
@@ -1176,14 +1163,8 @@ while True:
                                 draw_in_range_status(frame, In_range)
                                 cv2.imshow('frame-image', frame)
                 
-                # Display the frame once after all processing
-                #cv2.imshow('frame-image', frame)
                 if quit_flag or mode == 'manual':
                     break
-
-            # Crop rotation
-            # if In_range.get(keys)==True:
-            #     end_points = rotate_dict(end_points, k=2)
 
             # Final check for all targets reached - rotate endpoints
             if len(In_range) >= len(end_points) and all(In_range.get(k, False) for k in end_points.keys()):
@@ -1195,7 +1176,7 @@ while True:
     # Manual mode key hold state
     manual_last_key = None
     manual_last_key_time = 0
-    manual_key_timeout = 0.5  # Hold key for 0.5 seconds after last press
+    manual_key_timeout = MANUAL_KEY_TIMEOUT
     
     while mode == 'manual' and not quit_flag:
         
@@ -1205,7 +1186,7 @@ while True:
             continue
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
+        corners, ids, _ = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
         yaw = ball_last_yaw  # Use cached yaw as default
         
         # Only fetch yaw if we see the ball marker
@@ -1255,16 +1236,16 @@ while True:
         # Set next_target based on active key
         if pressed_key == 'w':
             print('direction = up')
-            next_target = np.array([-50, 0, compute_theta_send(yaw), 0])  # dy negative (up)
+            next_target = np.array([-MANUAL_MOVE_SPEED, 0, compute_theta_send(yaw), 0])  # dy negative (up)
         elif pressed_key == 'a':
             print('direction = left')
-            next_target = np.array([0, -50, compute_theta_send(yaw), 0])  # dx negative (left)
+            next_target = np.array([0, -MANUAL_MOVE_SPEED, compute_theta_send(yaw), 0])  # dx negative (left)
         elif pressed_key == 's':
             print('direction = down')
-            next_target = np.array([50, 0, compute_theta_send(yaw), 0])   # dy positive (down)
+            next_target = np.array([MANUAL_MOVE_SPEED, 0, compute_theta_send(yaw), 0])   # dy positive (down)
         elif pressed_key == 'd':
             print('direction = right')
-            next_target = np.array([0, 50, compute_theta_send(yaw), 0])   # dx positive (right)
+            next_target = np.array([0, MANUAL_MOVE_SPEED, compute_theta_send(yaw), 0])   # dx positive (right)
         else:
             next_target = np.array([0, 0, compute_theta_send(yaw), 0])
             print('no movement key pressed')
