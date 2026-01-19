@@ -336,10 +336,17 @@ parameters.cornerRefinementMaxIterations = 30
 # Error correction - helps with partially obscured markers
 parameters.errorCorrectionRate = 0.6
 
-# CAP_DSHOW to make sure it uses DirectShow backend on Windows (more stable)
+# CAP_DSHOW
 cap = cv2.VideoCapture(0)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 2750)
+# cap.set(cv2.CAP_PROP_FRAME_WIDTH, 2750)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+
+# Exposure control settings
+exposure_value = -10  # Starting exposure (range typically -13 to 0, lower = darker/faster)
+cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)  # Disable auto-exposure (0.25 or 1 depending on camera)
+cap.set(cv2.CAP_PROP_EXPOSURE, exposure_value)
+print(f"Initial exposure set to: {exposure_value}")
 
 #Create window
 cv2.namedWindow("frame-image", cv2.WINDOW_NORMAL)
@@ -363,7 +370,8 @@ radius = 1.5
 
 # Set target end points for pathfinding (can be changed later)
 #end_points = {1:[5,35], 4:[15,10]}
-end_points = {1:[16,6], 2:[16,10], 3:[4,16], 4:[4,24], 5:[16,32], 6:[16,36]}
+# end_points = {1:[16,6], 2:[16,10], 3:[4,16], 4:[4,24], 5:[16,32], 6:[16,36]}
+end_points = {1:[16,6], 2:[16,10], 3:[4,16]}
 # Set ball ArUco id
 ball_id = 8
 # Create id_buffer dictionary
@@ -425,6 +433,14 @@ while True:
             mode = 'manual'
             print ("Manual mode activated. Use 'awsd' keys to control the ball, 'c' to switch to auto mode, 'q' to quit.")
             break
+        if key == ord('=') or key == ord('+'):  # Increase exposure (brighter)
+            exposure_value = min(0, exposure_value + 1)
+            cap.set(cv2.CAP_PROP_EXPOSURE, exposure_value)
+            print(f"Exposure: {exposure_value}")
+        if key == ord('-') or key == ord('_'):  # Decrease exposure (darker)
+            exposure_value = max(-13, exposure_value - 1)
+            cap.set(cv2.CAP_PROP_EXPOSURE, exposure_value)
+            print(f"Exposure: {exposure_value}")
 
         # If markers are detected, draw them, estimate pose and overlay axes
         if ids is not None and len(ids) > 0:
@@ -653,9 +669,68 @@ while True:
                             ep = (max(0, min(grid_height-1, int(endpoint_xy[1]))), max(0, min(grid_width-1, int(endpoint_xy[0])))) # (x,y) format
                             path_t2e = tcod.path.path2d(cost=grid, start_points=[ts], end_points=[ep], cardinal=10, diagonal=14)
                             
-                            ballTarget_distance = 2
-
-                            if abs(ball_start[0] - target_start[0]) > ballTarget_distance or abs(ball_start[1] - target_start[1]) > ballTarget_distance:
+                            # ===== CALCULATE PHI BEFORE MODE DECISION =====
+                            # Simplify path for phi2 calculation
+                            if len(path_t2e) > 0:
+                                _, diagonaldown_path_t2e_pre = simplify_path(path_t2e)
+                            else:
+                                diagonaldown_path_t2e_pre = []
+                            
+                            # Calculate phi to determine mode
+                            phi_for_mode = None
+                            if len(diagonaldown_path_t2e_pre) >= 2:
+                                # Get ball corners for phi1 calculation
+                                if ids is not None and len(ids) > 0:
+                                    ball_idx_pre = np.where(ids == ball_id)[0]
+                                else:
+                                    ball_idx_pre = np.array([])
+                                if ball_idx_pre.size > 0:
+                                    ball_corners_pre = corners[ball_idx_pre[0]]
+                                elif ball_last_corners is not None:
+                                    ball_corners_pre = ball_last_corners
+                                else:
+                                    ball_corners_pre = None
+                                
+                                # Get target corners for phi1 calculation
+                                if target_visible:
+                                    target_corners_pre = corners[np.where(ids == keys)[0][0]]
+                                elif target_last_corners is not None:
+                                    target_corners_pre = target_last_corners
+                                else:
+                                    target_corners_pre = None
+                                
+                                # Calculate phi1 using pixel coordinates
+                                if ball_corners_pre is not None and target_corners_pre is not None:
+                                    ball_pts_pre = ball_corners_pre.reshape((4, 2))
+                                    ball_center_px_pre = ball_pts_pre.mean(axis=0)
+                                    target_pts_pre = target_corners_pre.reshape((4, 2))
+                                    target_center_px_pre = target_pts_pre.mean(axis=0)
+                                    phi1_pre = get_phi1_angle(target_center_px_pre, ball_center_px_pre)
+                                else:
+                                    phi1_pre = get_phi1_angle(
+                                        (target_start[0] * frame.shape[1] / grid_width, target_start[1] * frame.shape[0] / grid_height),
+                                        (ball_start[0] * frame.shape[1] / grid_width, ball_start[1] * frame.shape[0] / grid_height)
+                                    )
+                                
+                                # Calculate phi2
+                                next_waypoint_pre = diagonaldown_path_t2e_pre[1]
+                                phi2_pre = get_phi2_angle(target_start, next_waypoint_pre)
+                                
+                                # Calculate phi (angular difference)
+                                phi_for_mode = compute_phi(phi1_pre, phi2_pre)
+                            
+                            # Mode switching thresholds
+                            ballTarget_distance = 2  # Distance threshold (still needed)
+                            phi_threshold_deg = 20   # Phi threshold in degrees
+                            
+                            # Check if ball is close enough AND phi is within threshold for pushing mode
+                            ball_is_close = abs(ball_start[0] - target_start[0]) <= ballTarget_distance and abs(ball_start[1] - target_start[1]) <= ballTarget_distance
+                            phi_is_aligned = phi_for_mode is not None and abs(np.degrees(phi_for_mode)) <= phi_threshold_deg
+                            
+                            # Enter pushing mode only if ball is close AND properly aligned
+                            if not (ball_is_close and phi_is_aligned):
+                                # BALL-TO-TARGET MODE - ball needs to get closer or better aligned
+                                print(f"BALL-TO-TARGET MODE - close: {ball_is_close}, phi: {np.degrees(phi_for_mode) if phi_for_mode else 'N/A':.1f}° (threshold: ±{phi_threshold_deg}°)")
                                 # Set target to obstacle
                                 mask = (x_coords - target_start[0])**2 + (y_coords - target_start[1])**2 <= radius**2
                                 grid[mask] = 0
@@ -716,10 +791,14 @@ while True:
                                         # Use 2D corner-based angle (ignores tilt/pitch)
                                         yaw = get_2d_angle_from_corners(ball_corners_for_yaw)
                                         ball_last_yaw = yaw  # Update cached yaw
+                                        # Multiply by ball-to-target path length for speed scaling
+                                        path_length_b2t = len(path_b2t)
+                                        dx_scaled = dx * path_length_b2t
+                                        dy_scaled = dy * path_length_b2t
                                         # UDP sending
-                                        next_target = np.array([dy, dx,compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
+                                        next_target = np.array([dy_scaled, dx_scaled, compute_theta_send(yaw), angle_b2t])  #example data to send (y,x (i,j)) coordinates of next target point
                                         sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
-                                        print ("9. message:", next_target)
+                                        print (f"9. message: {next_target}, path_length_b2t: {path_length_b2t}")
                                         
                                         # Visualize theta (2D angle) on frame
                                         theta_deg = np.degrees(yaw)
@@ -782,11 +861,10 @@ while True:
                                 draw_in_range_status(frame, In_range)
                                 cv2.imshow('frame-image', frame)
                             else:
-                                # PUSHING MODE - ball is close enough to push target
-                                if len(path_t2e) > 0:
-                                    _, diagonaldown_path_t2e = simplify_path(path_t2e)
-                                else:
-                                    diagonaldown_path_t2e = []
+                                # PUSHING MODE - ball is close AND properly aligned (phi within threshold)
+                                print(f"PUSHING MODE - phi: {np.degrees(phi_for_mode):.1f}° (within ±{phi_threshold_deg}°)")
+                                # Reuse the pre-calculated simplified path
+                                diagonaldown_path_t2e = diagonaldown_path_t2e_pre
 
                                 # convert to dx, dy instructions for UDP sending
                                 # Check if path has at least 2 points before accessing [1]
@@ -895,10 +973,14 @@ while True:
                                     yaw = get_2d_angle_from_corners(ball_corners_for_yaw)
                                     ball_last_yaw = yaw  # Update cached yaw
 
+                                    # Multiply by target-to-endpoint path length for speed scaling
+                                    path_length_t2e = len(path_t2e)
+                                    dx_out_scaled = dx_out * path_length_t2e
+                                    dy_out_scaled = dy_out * path_length_t2e
                                     # UDP sending with combined control output
-                                    next_target = np.array([dy_out, dx_out, compute_theta_send(yaw), angle_b2t])
+                                    next_target = np.array([dy_out_scaled, dx_out_scaled, compute_theta_send(yaw), angle_b2t])
                                     sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
-                                    print ("13. message:", next_target)
+                                    print (f"13. message: {next_target}, path_length_t2e: {path_length_t2e}")
                                     
                                     # Visualize theta (2D angle) on frame
                                     theta_deg = np.degrees(yaw)
@@ -1029,18 +1111,17 @@ while True:
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
-        yaw = 0.0  # Default yaw value
+        yaw = ball_last_yaw  # Use cached yaw as default
         
         # Only fetch yaw if we see the ball marker
         if ids is not None and len(ids) > 0 and ball_id in ids.flatten():
             out = aruco.drawDetectedMarkers(frame, corners, ids)
-            rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, marker_size, CM, dist_coef)
             ball_idx = np.where(ids == ball_id)[0]
             if ball_idx.size > 0:
-                rotate_vec = rvecs[ball_idx[0]][0]
-                R, _ = cv2.Rodrigues(rvecs[ball_idx[0]][0])
-                yaw = np.arctan2(R[1, 0], R[0, 0])
-                print ('M1. rotate_vec:', yaw)
+                # Use 2D corner-based angle (consistent with auto mode)
+                yaw = get_2d_angle_from_corners(corners[ball_idx[0]])
+                ball_last_yaw = yaw  # Update cached yaw
+                print ('M1. yaw (2D):', np.degrees(yaw))
 
         # Check for 'awsd' key press for manual control
         key = cv2.waitKey(1) & 0xFF
