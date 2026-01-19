@@ -114,7 +114,8 @@ def grid_obstacle(ids, corners, target_id, x_coords, y_coords, grid, radius, fra
     output: updated grid with obstacles marked for all non-target markers
     '''
     img_h, img_w = frame.shape[:2]
-    
+    if ids is None:
+        return grid
     for i in range(len(ids)):
         marker_id = int(ids[i][0])
         # Ignore target marker and ball marker
@@ -122,27 +123,19 @@ def grid_obstacle(ids, corners, target_id, x_coords, y_coords, grid, radius, fra
             # Get corners for this specific marker
             pts = corners[i].reshape((4, 2))
             center_pixel = pts.mean(axis=0)
-            
             # Convert to grid coordinates
             grid_x = int(center_pixel[0] / img_w * grid_width)
             grid_y = int(center_pixel[1] / img_h * grid_height)
             center_grid = np.clip([grid_x, grid_y], 0, [grid_width - 1, grid_height - 1]).astype(int)
             ox, oy = center_grid
-
             # Set obstacle on grid
             mask = (x_coords - ox)**2 + (y_coords - oy)**2 <= radius**2
             grid[mask] = 0
-
             # Draw circle on frame using pixel coordinates
             ox_pixel = int(ox * img_w / grid_width)
             oy_pixel = int(oy * img_h / grid_height)
             radius_pixel = int(radius * img_w / grid_width)
             cv2.circle(frame, (ox_pixel, oy_pixel), radius_pixel, (0,0,255), 2)
-        # # Enforce boundary: x=1,39 and y=1,19 to zeros
-        # grid[0, :] = 0         # y=1 (row 0)
-        # grid[-1, :] = 0        # y=19 (row 19)
-        # grid[:, 0] = 0         # x=1 (col 0)
-        # grid[:, -1] = 0        # x=39 (col 39)
     return grid
 def rotate_dict(d, k=2):
     items = list(d.items())
@@ -466,6 +459,12 @@ while True:
 
         # Skip frame if capture failed
         if not ret or frame is None:
+            print("[WARNING] Frame capture failed (ret is False or frame is None). Check your camera connection.")
+            # Show a black frame with warning
+            black = np.zeros((480, 640, 3), dtype=np.uint8)
+            cv2.putText(black, 'No Camera Input', (50, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
+            cv2.imshow('frame-image', black)
+            cv2.waitKey(1)
             continue
 
         # Convert the image from the camera to Gray scale
@@ -474,6 +473,7 @@ while True:
         corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)  
         draw_in_range_status(frame, In_range)
         cv2.imshow('frame-image', frame)
+        cv2.waitKey(1)
         
         # Single key poll per frame to avoid missing inputs
         key = cv2.waitKey(1) & 0xFF
@@ -685,6 +685,7 @@ while True:
                         print(f"DEBUG (no ball): Showing frame, shape={frame.shape}, dtype={frame.dtype}")
                         draw_in_range_status(frame, In_range)
                         cv2.imshow('frame-image', frame)
+                        cv2.waitKey(1)
                         continue
                     
                     # Common code for both detected and cached ball
@@ -1153,6 +1154,7 @@ while True:
                 turret_last_center = None
                 turret_last_corners = None
                 turret_last_seen_time = None
+
                 while position_status == False and not quit_flag:
                     ret, frame = cap.read()
                     
@@ -1181,6 +1183,9 @@ while True:
                     # Check if current target is still visible
                     turret_visible = ids is not None and len(ids) > 0 and turret_id in ids.flatten()
                     fire_visible = ids is not None and len(ids) > 0 and IsFire_id in ids.flatten()
+                    ball_visible = ids is not None and len(ids) > 0 and ball_id in ids.flatten()
+                    print(f"DEBUG: turret_visible={turret_visible}, fire_visible={fire_visible}, ball_visible={ball_visible}")
+                    print(f"DEBUG: turret_last_center={turret_last_center}, turret_last_seen_time={turret_last_seen_time}")
                     if turret_visible:
                         # Target detected - update cache and timestamp
                         turret_idx = np.where(ids == turret_id)[0][0]
@@ -1188,6 +1193,7 @@ while True:
                         turret_last_center = get_center(corners[turret_idx], frame, grid_width, grid_height)
                         turret_last_seen_time = time.perf_counter()
                     elif turret_last_center is not None and turret_last_seen_time is not None:
+                        print(f"DEBUG: turret not visible, checking cache validity...")
                         # Target not visible - check if cache is still valid (within 3 seconds)
                         time_since_last_seen = time.perf_counter() - turret_last_seen_time
                         if time_since_last_seen >= target_cache_timeout:
@@ -1201,17 +1207,20 @@ while True:
                             # Use cached position
                             print(f"Target ID {turret_id} not visible - using cached position ({time_since_last_seen:.1f}s / {target_cache_timeout}s)")
                     else:
+                        print(f"DEBUG: turret not visible and no cache available.")
                         # No cache available - break immediately
                         print(f"DEBUG: Target ID {turret_id} lost - no cached position available, breaking loop.")
                         break
 
                     # Fire caching
+                    print(f"DEBUG: fire_last_center={fire_last_center}, fire_last_seen_time={fire_last_seen_time}")
                     if fire_visible:
                         fire_idx = np.where(ids == IsFire_id)[0][0]
                         fire_last_corners = corners[fire_idx].copy()
                         fire_last_center = get_center(corners[fire_idx], frame, grid_width, grid_height)
                         fire_last_seen_time = time.perf_counter()
                     elif fire_last_center is not None and fire_last_seen_time is not None:
+                        print(f"DEBUG: fire not visible, checking cache validity...")
                         time_since_last_seen = time.perf_counter() - fire_last_seen_time
                         if time_since_last_seen >= fire_cache_timeout:
                             print(f"DEBUG: Fire ID {IsFire_id} lost for {time_since_last_seen:.1f}s - switching to new target... (cache expired)")
@@ -1222,16 +1231,22 @@ while True:
                         else:
                             print(f"Fire ID {IsFire_id} not visible - using cached position ({time_since_last_seen:.1f}s / {fire_cache_timeout}s)")
                     else:
+                        print(f"DEBUG: fire not visible and no cache available.")
                         print(f"DEBUG: Fire ID {IsFire_id} lost - Switch out of Fire mode, breaking loop.")
                         IsFire = False
                         break
 
                     fire_position_available = fire_visible or (fire_last_center is not None and fire_last_seen_time is not None and (time.perf_counter() - fire_last_seen_time) < fire_cache_timeout)
                     turret_position_available = turret_visible or (turret_last_center is not None and turret_last_seen_time is not None and (time.perf_counter() - turret_last_seen_time) < turret_cache_timeout)
+                    print(f"DEBUG: fire_position_available={fire_position_available}, turret_position_available={turret_position_available}")
 
+                    # Ensure ball_last_seen_time is initialized
+                    if 'ball_last_seen_time' not in locals():
+                        ball_last_seen_time = None
                     # Check if ball is visible in current frame
-                    ball_visible = ids is not None and len(ids) > 0 and ball_id in ids.flatten()
+                    print(f"DEBUG: ball_last_center={ball_last_center}, ball_last_seen_time={ball_last_seen_time}")
                     
+                    print(f"DEBUG: Entering main logic: turret_position_available={turret_position_available}, fire_position_available={fire_position_available}, ball_visible={ball_visible}")
                     if turret_position_available and fire_position_available and ball_visible:
                         # Ball detected - update tracking and timestamp
                         ball_last_seen_time = time.perf_counter()
@@ -1240,7 +1255,7 @@ while True:
                         out = aruco.drawDetectedMarkers(frame, corners, ids)
                         rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, MARKER_SIZE, CM, dist_coef)
                         # Get target center - use detected if visible, otherwise use cached
-                        if target_visible:
+                        if turret_visible:
                             center_turret = get_center(corners[np.where(ids==turret_id)[0][0]], frame, grid_width, grid_height)
                         else:
                             center_turret = turret_last_center  # Use cached target position
@@ -1290,6 +1305,9 @@ while True:
                         cv2.imshow('frame-image', frame)
                         continue
                     
+                    # Get angle of ball to target
+                    angle_b2t = np.arctan2(center_turret[1]-center_ball[1], center_turret[0]-center_ball[0])
+
                     fire_x = center_fire [1]
                     fire_y = center_fire [0]
                     distance_to_fire = abs(center_turret[0] - fire_x) + abs(center_turret[1] - fire_y)
@@ -1305,30 +1323,83 @@ while True:
                         ball_start = center_ball
                         turret_start = center_turret
                         fire_start = center_fire
-                        
+
                         # fake fire
-                        fire_corners = corners[np.where(ids == IsFire_id)[0][0]]
-                        fire_pts = fire_corners.reshape((4, 2))
-                        top_left = fire_pts[0]
-                        top_right = fire_pts[1]
-                        top_middle_px = (top_left + top_right) / 2
-                        top_middle_grid_x = top_middle_px[0] * grid_width / img_w
-                        top_middle_grid_y = top_middle_px[1] * grid_height / img_h
-                        img_h, img_w = frame.shape[:2]
-                        center_fire_grid_x = center_fire[0]
-                        center_fire_grid_y = center_fire[1]
-                        vec_x = top_middle_grid_x - center_fire_grid_x
-                        vec_y = top_middle_grid_y - center_fire_grid_y
-                        vec_norm = np.sqrt(vec_x**2 + vec_y**2)
-                        if vec_norm != 0:
-                            dir_x = vec_x / vec_norm
-                            dir_y = vec_y / vec_norm
+                        # Use detected fire_corners if visible, else use cached
+                        if ids is not None and IsFire_id in ids:
+                            fire_idx = np.where(ids == IsFire_id)[0]
+                            if fire_idx.size > 0:
+                                fire_corners_for_fake = corners[fire_idx[0]]
+                            else:
+                                fire_corners_for_fake = fire_last_corners
                         else:
-                            dir_x, dir_y = 0, -1
-                        fake_fire_x = center_fire_grid_x + 5 * dir_x
-                        fake_fire_y = center_fire_grid_y + 5 * dir_y
-                        fake_fire = (fake_fire_x, fake_fire_y)
-                        print(f"Fake fire location (5 grid away, top middle direction): {fake_fire}")
+                            fire_corners_for_fake = fire_last_corners
+                        if fire_corners_for_fake is not None:
+                            # Use rvecs/tvecs to project the real-world top corners of the marker
+                            fire_idx = None
+                            if ids is not None and IsFire_id in ids:
+                                idxs = np.where(ids == IsFire_id)[0]
+                                if len(idxs) > 0:
+                                    fire_idx = idxs[0]
+                            if fire_idx is not None and 'rvecs' in locals() and 'tvecs' in locals():
+                                rvec = rvecs[fire_idx][0]
+                                tvec = tvecs[fire_idx][0]
+                                marker_length = 40  # mm
+                                # Define top-left and top-right in marker coordinate system
+                                top_left_3d = np.array([[0, 0, 0]], dtype=np.float32)
+                                top_right_3d = np.array([[marker_length, 0, 0]], dtype=np.float32)
+                                img_pts_left, _ = cv2.projectPoints(top_left_3d, rvec, tvec, CM, dist_coef)
+                                img_pts_right, _ = cv2.projectPoints(top_right_3d, rvec, tvec, CM, dist_coef)
+                                img_h, img_w = frame.shape[:2]
+                                # Midpoint in image
+                                top_middle_px = (img_pts_left[0][0] + img_pts_right[0][0]) / 2
+                                # Convert to grid coordinates
+                                top_middle_grid_x = top_middle_px[0] * grid_width / img_w
+                                top_middle_grid_y = top_middle_px[1] * grid_height / img_h
+                                center_fire_grid_x = center_fire[0]
+                                center_fire_grid_y = center_fire[1]
+                                # Direction vector from center to projected top edge midpoint
+                                dir_x = top_middle_grid_x - center_fire_grid_x
+                                dir_y = top_middle_grid_y - center_fire_grid_y
+                                vec_norm = np.sqrt(dir_x**2 + dir_y**2)
+                                if vec_norm != 0:
+                                    dir_x /= vec_norm
+                                    dir_y /= vec_norm
+                                else:
+                                    dir_x, dir_y = 0, -1
+                                fake_fire_x = center_fire_grid_x + 5 * dir_x
+                                fake_fire_y = center_fire_grid_y + 5 * dir_y
+                                fake_fire = (fake_fire_x, fake_fire_y)
+                                print(f"Fake fire location (5 grid away, real-world top edge direction): {fake_fire}")
+                            else:
+                                # Fallback to 2D corners if pose not available
+                                fire_pts = fire_corners_for_fake.reshape((4, 2))
+                                top_left = fire_pts[0]
+                                top_right = fire_pts[1]
+                                top_middle_px = (top_left + top_right) / 2
+                                img_h, img_w = frame.shape[:2]
+                                top_middle_grid_x = top_middle_px[0] * grid_width / img_w
+                                top_middle_grid_y = top_middle_px[1] * grid_height / img_h
+                                center_fire_grid_x = center_fire[0]
+                                center_fire_grid_y = center_fire[1]
+                                dir_x = top_middle_grid_x - center_fire_grid_x
+                                dir_y = top_middle_grid_y - center_fire_grid_y
+                                vec_norm = np.sqrt(dir_x**2 + dir_y**2)
+                                if vec_norm != 0:
+                                    dir_x /= vec_norm
+                                    dir_y /= vec_norm
+                                else:
+                                    dir_x, dir_y = 0, -1
+                                fake_fire_x = center_fire_grid_x + 5 * dir_x
+                                fake_fire_y = center_fire_grid_y + 5 * dir_y
+                                fake_fire = (fake_fire_x, fake_fire_y)
+                                print(f"Fake fire location (5 grid away, fallback 2D): {fake_fire}")
+                        else:
+                            fake_fire = center_fire  # fallback
+                            print("Fake fire fallback: using center_fire as fake_fire (no corners available)")
+
+                        # Ensure all drawing is done before showing the frame
+                        # (Move cv2.imshow to after all overlays)
 
                         # pathfinding turret to fire
                         ts = (max(0, min(grid_height-1, int(turret_start[1]))), max(0, min(grid_width-1, int(turret_start[0]))))
@@ -1520,20 +1591,21 @@ while True:
                             cv2.drawMarker(frame, turret_pixel, (0,0,255), cv2.MARKER_TILTED_CROSS, 40, 2)
                             cv2.drawMarker(frame, fake_pixel, (255,0,255), cv2.MARKER_DIAMOND, 40, 2)
 
-                            fire_pixel = (int(ep_coords[1] * img_w / grid_width), int(ep_coords[0] * img_h / grid_height))
+                            fire_pixel = (int(center_fire[1] * img_w / grid_width), int(center_fire[0] * img_h / grid_height))
                             fake_fire_pixel = (int(fake_fire[0] * img_w / grid_width), int(fake_fire[1] * img_h / grid_height)) 
                             cv2.drawMarker(frame, fire_pixel, (255,255,0), cv2.MARKER_TILTED_CROSS, 40, 2)
                             cv2.drawMarker(frame, fake_fire_pixel, (0,255,255), cv2.MARKER_DIAMOND, 40, 2)
-                            # Draw the id number next to the endpoint marker
+                            # Draw the fire marker id number next to the fire marker
                             text_pos = (fire_pixel[0] + 10, fire_pixel[1] - 10)
-                            cv2.putText(frame, str(k), text_pos, cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,0), 2, cv2.LINE_AA)
+                            cv2.putText(frame, str(IsFire_id), text_pos, cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,0), 2, cv2.LINE_AA)
                             
-                            # DEBUG: Draw a colored rectangle and print frame shape before showing
+                            # DEBUG: Draw a colored rectanglqe and print frame shape before showing
                             cv2.rectangle(frame, (10, 10), (200, 80), (0, 255, 0), -1)
                             cv2.putText(frame, 'DEBUG', (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,0,0), 2)
                             print(f"DEBUG: Showing frame, shape={frame.shape}, dtype={frame.dtype}")
                             draw_in_range_status(frame, In_range)
                             cv2.imshow('frame-image', frame)
+                            cv2.waitKey(1)
                         
                         else:
                             # PUSHING MODE - ball is close AND properly aligned (phi within threshold)
@@ -1688,9 +1760,9 @@ while True:
                                 x = int(round(j * img_w / grid_width))
                                 cv2.line(frame, (x, 0), (x, img_h), (100, 100, 100), 1)
                             
-                            if len(diagonaldown_path_t2e) >= 1:
+                            if len(diagonaldown_path_t2f) >= 1:
                                 path_pixels = []
-                                for point in diagonaldown_path_t2e:
+                                for point in diagonaldown_path_t2f:
                                     x_pixel = int(point[1] * img_w / grid_width)
                                     y_pixel = int(point[0] * img_h / grid_height)
                                     path_pixels.append([x_pixel, y_pixel])
@@ -1752,12 +1824,13 @@ while True:
                             cv2.drawMarker(frame, fire_pixel, (255,255,0), cv2.MARKER_DIAMOND, 40, 2)
                             # Draw the id number next to the endpoint marker
                             text_pos = (fire_pixel[0] + 10, fire_pixel[1] - 10)
-                            cv2.putText(frame, str(k), text_pos, cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,0), 2, cv2.LINE_AA)
+                            cv2.putText(frame, str(IsFire_id), text_pos, cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,0), 2, cv2.LINE_AA)
 
                             cv2.drawMarker(frame, ball_pixel, (0,255,0), cv2.MARKER_TILTED_CROSS, 40, 2)
                             cv2.drawMarker(frame, turret_pixel, (0,0,255), cv2.MARKER_TILTED_CROSS, 40, 2)
                             draw_in_range_status(frame, In_range)
                             cv2.imshow('frame-image', frame)
+                            cv2.waitKey(1)
 
             if quit_flag or mode == 'manual' or IsFire == False:
                 break
@@ -1823,6 +1896,7 @@ while True:
         sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
         draw_in_range_status(frame, In_range)
         cv2.imshow('frame-image', frame)
+        cv2.waitKey(1)
 
     if quit_flag:
         break
