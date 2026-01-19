@@ -146,11 +146,23 @@ def grid_obstacle(ids, corners, target_id, x_coords, y_coords, grid, radius, fra
         # grid[:, 0] = 0         # x=1 (col 0)
         # grid[:, -1] = 0        # x=39 (col 39)
     return grid
-def rotate_dict(d, k=2):
-    items = list(d.items())
-    k = k % len(items)   # safety for large shifts
-    rotated = items[-k:] + items[:-k]
-    return dict(rotated)
+def rotate_dict(d, k=1):
+    """
+    Rotate endpoint VALUES so each marker gets a new destination.
+    k=1 means each marker moves to the next endpoint (shift by 1).
+    
+    Example with k=1:
+    Before: {2:[16,10], 4:[6,30], 6:[16,36]}
+    After:  {2:[16,36], 4:[16,10], 6:[6,30]}  (marker 2 now goes where 6 was, etc.)
+    """
+    keys = list(d.keys())
+    values = list(d.values())
+    n = len(values)
+    k = k % n   # safety for large shifts
+    # Rotate values: shift by k positions
+    rotated_values = values[-k:] + values[:-k]
+    # Reassign rotated values to original keys
+    return dict(zip(keys, rotated_values))
 def compute_theta_send(theta):
     theta_send = -theta
     return theta_send
@@ -369,9 +381,8 @@ y_coords, x_coords = np.ogrid[:grid_height, :grid_width]
 radius = 1.5
 
 # Set target end points for pathfinding (can be changed later)
-#end_points = {1:[5,35], 4:[15,10]}
 # end_points = {1:[16,6], 2:[16,10], 3:[4,16], 4:[4,24], 5:[16,32], 6:[16,36]}
-end_points = {1:[16,6], 2:[16,10], 3:[4,16]}
+end_points = {2:[16,10], 4:[6,30], 6:[16,36]}
 # Set ball ArUco id
 ball_id = 8
 # Create id_buffer dictionary
@@ -722,7 +733,7 @@ while True:
                             
                             # Mode switching thresholds
                             ballTarget_distance = 2  # Distance threshold (still needed)
-                            phi_threshold_deg = 20   # Phi threshold in degrees
+                            phi_threshold_deg = 45   # Phi threshold in degrees
                             
                             # Check if ball is close enough AND phi is within threshold for pushing mode
                             ball_is_close = abs(ball_start[0] - target_start[0]) <= ballTarget_distance and abs(ball_start[1] - target_start[1]) <= ballTarget_distance
@@ -745,16 +756,26 @@ while True:
 
                                 # Threshold vector to determine attack angle onto target
                                 attackThreshold = 3
+                                push_distance = attackThreshold  # adjust as needed
 
                                 # Determine fake target position opposite to endpoint
-                                if len(path_t2e) >= attackThreshold:
-                                    # Vector from target to endpoint
+                                # Use endpoint directly if path is too short to get direction
+                                if len(path_t2e) >= 2:
+                                    # Vector from target to next waypoint (direction to endpoint)
                                     vec_t2e = (path_t2e[1][1] - target_start[0], path_t2e[1][0] - target_start[1])
-                                    # Place fake target opposite the endpoint, at a certain distance
-                                    push_distance = attackThreshold  # adjust as needed
-                                    fake_target = (target_start[0] - push_distance * vec_t2e[0], target_start[1] - push_distance * vec_t2e[1])
                                 else:
-                                    # Path too short, use target position
+                                    # Path has only 1 point (target at endpoint), use direct vector to endpoint
+                                    endpoint_xy = get_endpoint_xy(end_points.get(keys))
+                                    vec_t2e = (endpoint_xy[1] - target_start[0], endpoint_xy[0] - target_start[1])
+                                
+                                # Normalize vector if non-zero, then place fake target opposite
+                                vec_length = np.sqrt(vec_t2e[0]**2 + vec_t2e[1]**2)
+                                if vec_length > 0:
+                                    vec_t2e_norm = (vec_t2e[0] / vec_length, vec_t2e[1] / vec_length)
+                                    fake_target = (target_start[0] - push_distance * vec_t2e_norm[0], 
+                                                   target_start[1] - push_distance * vec_t2e_norm[1])
+                                else:
+                                    # Target is exactly at endpoint, no direction to compute
                                     fake_target = target_start
                                 
                                 # pathfinding ball to fake target
@@ -1099,7 +1120,7 @@ while True:
             # Final check for all targets reached - rotate endpoints
             if len(In_range) >= len(end_points) and all(In_range.get(k, False) for k in end_points.keys()):
                 print("All targets in position! Rotating endpoints...")
-                end_points = rotate_dict(end_points, k=2)
+                end_points = rotate_dict(end_points, k=1)  # k=1 shifts each marker to next endpoint
                 In_range.clear()  # Reset In_range for new endpoint assignments
                 print(f"New endpoints: {end_points}")
         
