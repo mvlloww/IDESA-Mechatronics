@@ -1377,8 +1377,8 @@ while True:
 
                     if fire_corners_for_fake is not None:
                         angle2v = get_2d_angle_from_corners(fire_corners_for_fake)
-                        vector_x = np.sin(angle2v)
-                        vector_y = np.cos(angle2v)
+                        vector_x = -np.sin(angle2v)  # Flipped sign
+                        vector_y = -np.cos(angle2v)
                         fake_fire = (center_fire[0] + vector_x * FAKE_FIRE_DISTANCE, center_fire[1] + vector_y * FAKE_FIRE_DISTANCE)
 
                     else:
@@ -1387,7 +1387,8 @@ while True:
 
                     # pathfinding turret to fire
                     ts = (max(0, min(grid_height-1, int(turret_start[1]))), max(0, min(grid_width-1, int(turret_start[0]))))
-                    fs = (max(0, min(grid_height-1, int(fake_fire[1]))), max(0, min(grid_width-1, int(fake_fire[0]))))    
+                    # Use yellow diamond (fake_fire) for pathfinding endpoint
+                    fs = (max(0, min(grid_height-1, int(fake_fire[1]))), max(0, min(grid_width-1, int(fake_fire[0]))))
                     path_t2f = tcod.path.path2d(cost=grid, start_points=[ts], end_points=[fs], cardinal=10, diagonal=14)
 
                     # Simplify path for phi2 calculation
@@ -1458,8 +1459,16 @@ while True:
                     vec_length = np.sqrt(vec_t2f[0]**2 + vec_t2f[1]**2)
                     if vec_length > 0:
                         vec_t2f_norm = (vec_t2f[0] / vec_length, vec_t2f[1] / vec_length)
-                        fake_turret = (turret_start[0] - push_distance * vec_t2f_norm[0], 
-                                        turret_start[1] - push_distance * vec_t2f_norm[1])
+                        # Calculate unconstrained fake_turret
+                        unconstrained_fake_turret = (
+                            int(round(turret_start[0] - push_distance * vec_t2f_norm[0])),
+                            int(round(turret_start[1] - push_distance * vec_t2f_norm[1]))
+                        )
+                        # Clamp fake_turret to be within 2x2 grid centered on turret_start
+                        fake_turret = (
+                            max(turret_start[0] - 1, min(turret_start[0] + 1, unconstrained_fake_turret[0])),
+                            max(turret_start[1] - 1, min(turret_start[1] + 1, unconstrained_fake_turret[1]))
+                        )
                     else:
                         fake_turret = turret_start
                     # pathfinding ball to fake turret
@@ -1550,6 +1559,7 @@ while True:
                                 path_pixels.append([x_pixel, y_pixel])
                             path_pixels = np.array(path_pixels, dtype=np.int32)
                             cv2.polylines(frame, [path_pixels], False, color=(255,0,0), thickness=2)
+
                         ball_pixel = (int(center_ball[0] * img_w / grid_width), int(center_ball[1] * img_h / grid_height))
                         turret_pixel = (int(turret_start[0] * img_w / grid_width), int(turret_start[1] * img_h / grid_height))
                         fake_pixel = (int(fake_turret[0] * img_w / grid_width), int(fake_turret[1] * img_h / grid_height))
