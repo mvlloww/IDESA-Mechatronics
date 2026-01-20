@@ -1498,58 +1498,59 @@ while True:
 
                     # Calculate phi to determine mode
                     phi_for_mode = None
-                    if len(diagonaldown_path_t2f_pre) >= 2:
-                        # Get ball corners for phi1 calculation
-                        if ids is not None and len(ids) > 0:
-                            ball_idx_pre = np.where(ids == ball_id)[0]
-                        else:
-                            ball_idx_pre = np.array([])
-                        if ball_idx_pre.size > 0:
-                            ball_corners_pre = corners[ball_idx_pre[0]]
-                        elif ball_last_corners is not None:
-                            ball_corners_pre = ball_last_corners
-                        else:
-                            ball_corners_pre = None
-                        # Get target corners for phi1 calculation
-                        if turret_visible:
-                            turret_corners_pre = corners[np.where(ids == turret_id)[0][0]]
-                        elif turret_last_corners is not None:
-                            turret_corners_pre = turret_last_corners
-                        else:
-                            turret_corners_pre = None
-                        # Calculate phi1 using pixel coordinates
-                        if ball_corners_pre is not None and turret_corners_pre is not None:
-                            ball_pts_pre = ball_corners_pre.reshape((4, 2))
-                            ball_center_px_pre = ball_pts_pre.mean(axis=0)
-                            turret_pts_pre = turret_corners_pre.reshape((4, 2))
-                            turret_center_px_pre = turret_pts_pre.mean(axis=0)
-                            phi1_pre = get_phi1_angle(turret_center_px_pre, ball_center_px_pre)
-                        else:
-                            phi1_pre = get_phi1_angle(
-                                (turret_start[0] * frame.shape[1] / grid_width, turret_start[1] * frame.shape[0] / grid_height),
-                                (ball_start[0] * frame.shape[1] / grid_width, ball_start[1] * frame.shape[0] / grid_height)
-                            )
-                        # Calculate phi2
-                        if ids is not None and turret_id in ids:
-                            turret_idx = np.where(ids == turret_id)[0]
-                            if turret_idx.size > 0:
-                                turret_corners_for_fake = corners[turret_idx[0]]
-                            else:
-                                turret_corners_for_fake = turret_last_corners
+                    # if len(diagonaldown_path_t2f_pre) >= 2:
+                    # Get ball corners for phi1 calculation
+                    if ids is not None and len(ids) > 0:
+                        ball_idx_pre = np.where(ids == ball_id)[0]
+                    else:
+                        ball_idx_pre = np.array([])
+                    if ball_idx_pre.size > 0:
+                        ball_corners_pre = corners[ball_idx_pre[0]]
+                    elif ball_last_corners is not None:
+                        ball_corners_pre = ball_last_corners
+                    else:
+                        ball_corners_pre = None
+                    # Get target corners for phi1 calculation
+                    if turret_visible:
+                        turret_corners_pre = corners[np.where(ids == turret_id)[0][0]]
+                    elif turret_last_corners is not None:
+                        turret_corners_pre = turret_last_corners
+                    else:
+                        turret_corners_pre = None
+                    # Calculate phi1 using pixel coordinates
+                    if ball_corners_pre is not None and turret_corners_pre is not None:
+                        ball_pts_pre = ball_corners_pre.reshape((4, 2))
+                        ball_center_px_pre = ball_pts_pre.mean(axis=0)
+                        turret_pts_pre = turret_corners_pre.reshape((4, 2))
+                        turret_center_px_pre = turret_pts_pre.mean(axis=0)
+                        phi1_pre = get_phi1_angle(turret_center_px_pre, ball_center_px_pre)
+                    else:
+                        phi1_pre = get_phi1_angle(
+                            (turret_start[0] * frame.shape[1] / grid_width, turret_start[1] * frame.shape[0] / grid_height),
+                            (ball_start[0] * frame.shape[1] / grid_width, ball_start[1] * frame.shape[0] / grid_height)
+                        )
+                    # Calculate phi2
+                    if ids is not None and turret_id in ids:
+                        turret_idx = np.where(ids == turret_id)[0]
+                        if turret_idx.size > 0:
+                            turret_corners_for_fake = corners[turret_idx[0]]
                         else:
                             turret_corners_for_fake = turret_last_corners
-                        
-                        if turret_corners_for_fake is not None:
-                            angle2v = get_2d_angle_from_corners(turret_corners_for_fake)
-                        else:
-                            angle2v = None
+                    else:
+                        turret_corners_for_fake = turret_last_corners
+                    
+                    if turret_corners_for_fake is not None:
+                        angle2v = get_2d_angle_from_corners(turret_corners_for_fake)
+                    else:
+                        angle2v = None
 
-                        phi2_pre = get_phi2_turret(center_turret, angle2v)
-                        # Calculate phi (angular difference)
-                        phi_for_mode = compute_phi(phi1_pre, phi2_pre)
-                        print('phi for mode', phi_for_mode)
+                    phi2_pre = get_phi2_turret(center_turret, angle2v)
+                    # Calculate phi (angular difference)
+                    phi_for_mode = compute_phi(phi1_pre, phi2_pre)
+                    print('phi for mode', phi_for_mode)
 
                     ball_is_close = abs(ball_start[0] - turret_start[0]) <= BALL_TURRET_DISTANCE and abs(ball_start[1] - turret_start[1]) <= BALL_TURRET_DISTANCE
+                    # ball_is_close = path_length_b2t <= BALL_TURRET_DISTANCE
                     phi_is_aligned = phi_for_mode is not None and abs(np.degrees(phi_for_mode)) <= PHI_THRESHOLD_DEG
                     
                     # Check if ball is close enough AND phi is within threshold for pushing mod
