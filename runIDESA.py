@@ -406,7 +406,7 @@ OBSTACLE_RADIUS = 1.5               # Radius around obstacles (grid units)
 # === Camera Settings ===
 CAMERA_WIDTH = 1920                 # Camera resolution width
 CAMERA_HEIGHT = 1080                # Camera resolution height
-INITIAL_EXPOSURE = -4              # Initial exposure value (-13 to 0)
+INITIAL_EXPOSURE = -5              # Initial exposure value (-13 to 0)
 
 # === UDP Communication ===
 UDP_IP = "138.38.229.206"           # Raspberry Pi IP address
@@ -1415,8 +1415,8 @@ while True:
                     grid.fill(1)
                     if ids is not None:
                         ''' ------------------------------------'''
-                        reduced_radius = max(1, int(radius * 0.5))
-                        grid = grid_obstacle(ids, corners, IsFire_id, x_coords, y_coords, grid, reduced_radius, frame, grid_width, grid_height)
+                        #reduced_radius = max(1, int(radius * 0.5))
+                        grid = grid_obstacle(ids, corners, IsFire_id, x_coords, y_coords, grid, radius, frame, grid_width, grid_height)
 
                         # Ensure turret, fire, and ball grid cells are open after obstacle placement
                         bx = int(center_ball[0])
@@ -1485,16 +1485,16 @@ while True:
                     print("DEBUG: grid region between ts and fs (after pathfinding):")
                     print(grid[min_row:max_row+1, min_col:max_col+1])
 
-                    # Visualize the turret-to-fire path if it exists
-                    if len(path_t2f) > 0:
-                        img_h, img_w = frame.shape[:2]
-                        path_pixels = []
-                        for point in path_t2f:
-                            x_pixel = int(point[1] * img_w / grid_width)
-                            y_pixel = int(point[0] * img_h / grid_height)
-                            path_pixels.append([x_pixel, y_pixel])
-                        path_pixels = np.array(path_pixels, dtype=np.int32)
-                        cv2.polylines(frame, [path_pixels], False, color=(0,255,255), thickness=2)
+                    # # Only visualize the t2f path in pushing mode
+                    # if ball_is_close and phi_is_aligned and len(path_t2f) > 0:
+                    #     img_h, img_w = frame.shape[:2]
+                    #     path_pixels = []
+                    #     for point in path_t2f:
+                    #         x_pixel = int(point[1] * img_w / grid_width)
+                    #         y_pixel = int(point[0] * img_h / grid_height)
+                    #         path_pixels.append([x_pixel, y_pixel])
+                    #     path_pixels = np.array(path_pixels, dtype=np.int32)
+                    #     cv2.polylines(frame, [path_pixels], False, color=(0,255,255), thickness=2)
 
                     # Calculate phi to determine mode
                     phi_for_mode = None
@@ -1665,8 +1665,8 @@ while True:
                                         sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
                                         print (f"9. message (fallback): {next_target}, path_length_b2t: {path_length_b2t}")
 
-                        # Always show overlays
-                        if len(diagonaldown_path_b2t) >= 1:
+                        # Only show b2t path in ball-to-turret mode
+                        if not (ball_is_close and phi_is_aligned) and len(diagonaldown_path_b2t) >= 1:
                             path_pixels = []
                             for point in diagonaldown_path_b2t:
                                 x_pixel = int(point[1] * img_w / grid_width)
@@ -1674,6 +1674,10 @@ while True:
                                 path_pixels.append([x_pixel, y_pixel])
                             path_pixels = np.array(path_pixels, dtype=np.int32)
                             cv2.polylines(frame, [path_pixels], False, color=(255,0,0), thickness=2)
+                            # Display dx/dy sent through UDP
+                            dx_udp = dx if 'dx' in locals() else 0
+                            dy_udp = dy if 'dy' in locals() else 0
+                            cv2.putText(frame, f"UDP dx: {dx_udp:.2f} dy: {dy_udp:.2f}", (30, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255,0,0), 2)
 
                         ball_pixel = (int(center_ball[0] * img_w / grid_width), int(center_ball[1] * img_h / grid_height))
                         turret_pixel = (int(turret_start[0] * img_w / grid_width), int(turret_start[1] * img_h / grid_height))
@@ -1945,9 +1949,9 @@ while True:
                             x = int(round(j * img_w / grid_width))
                             cv2.line(frame, (x, 0), (x, img_h), (100, 100, 100), 1)
                         
-                        if len(diagonaldown_path_b2t) >= 1:
+                        if len(diagonaldown_path_t2f) >= 1:
                             path_pixels = []
-                            for point in diagonaldown_path_b2t:
+                            for point in diagonaldown_path_t2f:
                                 x_pixel = int(point[1] * img_w / grid_width)
                                 y_pixel = int(point[0] * img_h / grid_height)
                                 path_pixels.append([x_pixel, y_pixel])
