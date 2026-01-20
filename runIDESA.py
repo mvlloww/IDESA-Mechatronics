@@ -377,7 +377,7 @@ OBSTACLE_RADIUS = 1.5               # Radius around obstacles (grid units)
 # === Camera Settings ===
 CAMERA_WIDTH = 1920                 # Camera resolution width
 CAMERA_HEIGHT = 1080                # Camera resolution height
-INITIAL_EXPOSURE = -5              # Initial exposure value (-13 to 0)
+INITIAL_EXPOSURE = -4              # Initial exposure value (-13 to 0)
 
 # === UDP Communication ===
 UDP_IP = "138.38.229.206"           # Raspberry Pi IP address
@@ -873,9 +873,9 @@ while True:
                                     fake_target = target_start
                                 
                                 # pathfinding ball to fake target
-                                # Clip coordinates to grid bounds
                                 bs = (max(0, min(grid_height-1, int(ball_start[1]))), max(0, min(grid_width-1, int(ball_start[0]))))
-                                ts = (max(0, min(grid_height-1, int(fake_target[1]))), max(0, min(grid_width-1, int(fake_target[0]))))
+                                ts = (int(fake_target[1]), int(fake_target[0]))  # Allow full range, only clamp to grid bounds
+                                ts = (max(0, min(grid_height-1, ts[0])), max(0, min(grid_width-1, ts[1])))
                                 path_b2t = tcod.path.path2d(cost=grid, start_points=[bs], end_points=[ts], cardinal=10, diagonal=0)
                                 # tcod can return an empty array; guard simplify_path
                                 if len(path_b2t) > 0:
@@ -1435,120 +1435,123 @@ while True:
                         phi2_pre = get_phi2_angle(turret_start, next_waypoint_pre)
                         # Calculate phi (angular difference)
                         phi_for_mode = compute_phi(phi1_pre, phi2_pre)
-                    # Check if ball is close enough AND phi is within threshold for pushing mode
+
                     ball_is_close = abs(ball_start[0] - turret_start[0]) <= BALL_TURRET_DISTANCE and abs(ball_start[1] - turret_start[1]) <= BALL_TURRET_DISTANCE
                     phi_is_aligned = phi_for_mode is not None and abs(np.degrees(phi_for_mode)) <= PHI_THRESHOLD_DEG
-                    # Always run overlays and add debug info for troubleshooting
-                    phi_str = f"{np.degrees(phi_for_mode):.1f}" if phi_for_mode is not None else "N/A"
-                    print(f"BALL-TO-TURRET MODE - close: {ball_is_close}, phi: {phi_str}° (threshold: ±{PHI_THRESHOLD_DEG}°)")
-                    print(f"DEBUG: path_t2f length: {len(path_t2f) if 'path_t2f' in locals() else 'N/A'} diagonaldown_path_b2t length: {len(diagonaldown_path_b2t) if 'diagonaldown_path_b2t' in locals() else 'N/A'}")
-                    # Set target to obstacle
-                    mask = (x_coords - turret_start[0])**2 + (y_coords - turret_start[1])**2 <= radius**2
-                    grid[mask] = 0
-                    img_h, img_w = frame.shape[:2]
-                    ox_pixel = int(turret_start[0] * img_w / grid_width)
-                    oy_pixel = int(turret_start[1] * img_h / grid_height)
-                    radius_pixel = int(radius * img_w / grid_width)
-                    cv2.circle(frame, (ox_pixel, oy_pixel), radius_pixel, (0,0,255), 2)
-                    # Determine fake target position opposite to endpoint
-                    push_distance = ATTACK_DISTANCE
-                    if len(path_t2f) >= 2:
-                        vec_t2f = (path_t2f[1][1] - turret_start[0], path_t2f[1][0] - turret_start[1])
-                    else:
-                        vec_t2f = (center_fire[1] - turret_start[0], center_fire[0] - turret_start[1])
-                    vec_length = np.sqrt(vec_t2f[0]**2 + vec_t2f[1]**2)
-                    if vec_length > 0:
-                        vec_t2f_norm = (vec_t2f[0] / vec_length, vec_t2f[1] / vec_length)
-                        # Calculate unconstrained fake_turret
-                        unconstrained_fake_turret = (
-                            int(round(turret_start[0] - push_distance * vec_t2f_norm[0])),
-                            int(round(turret_start[1] - push_distance * vec_t2f_norm[1]))
-                        )
-                        # Clamp fake_turret to be within 2x2 grid centered on turret_start
-                        fake_turret = (
-                            max(turret_start[0] - 1, min(turret_start[0] + 1, unconstrained_fake_turret[0])),
-                            max(turret_start[1] - 1, min(turret_start[1] + 1, unconstrained_fake_turret[1]))
-                        )
-                    else:
-                        fake_turret = turret_start
-                    # pathfinding ball to fake turret
-                    print(f"DEBUG: Ball start: {ball_start}, Turret start: {turret_start}, Fake turret: {fake_turret}")
-                    print(f"DEBUG: Grid sum (should be >0): {np.sum(grid)}")
-                    bs = (max(0, min(grid_height-1, int(ball_start[1]))), max(0, min(grid_width-1, int(ball_start[0]))))
-                    ts = (max(0, min(grid_height-1, int(fake_turret[1]))), max(0, min(grid_width-1, int(fake_turret[0]))))
-                    path_b2t = tcod.path.path2d(cost=grid, start_points=[bs], end_points=[ts], cardinal=10, diagonal=0)
-                    print(f"DEBUG: path_b2t: {path_b2t}")
-                    if len(path_b2t) > 0:
-                        _, diagonaldown_path_b2t = simplify_path(path_b2t)
-                    else:
-                        diagonaldown_path_b2t = []
-                    print(f"DEBUG: path_b2t length: {len(path_b2t)}, diagonaldown_path_b2t length: {len(diagonaldown_path_b2t)}")
+                    
+                    # Check if ball is close enough AND phi is within threshold for pushing mod
+                    if not (ball_is_close and phi_is_aligned):
+                        # Always run overlays and add debug info for troubleshooting
+                        phi_str = f"{np.degrees(phi_for_mode):.1f}" if phi_for_mode is not None else "N/A"
+                        print(f"BALL-TO-TURRET MODE - close: {ball_is_close}, phi: {phi_str}° (threshold: ±{PHI_THRESHOLD_DEG}°)")
+                        print(f"DEBUG: path_t2f length: {len(path_t2f) if 'path_t2f' in locals() else 'N/A'} diagonaldown_path_b2t length: {len(diagonaldown_path_b2t) if 'diagonaldown_path_b2t' in locals() else 'N/A'}")
+                        # Set target to obstacle
+                        mask = (x_coords - turret_start[0])**2 + (y_coords - turret_start[1])**2 <= radius**2
+                        grid[mask] = 0
+                        img_h, img_w = frame.shape[:2]
+                        ox_pixel = int(turret_start[0] * img_w / grid_width)
+                        oy_pixel = int(turret_start[1] * img_h / grid_height)
+                        radius_pixel = int(radius * img_w / grid_width)
+                        cv2.circle(frame, (ox_pixel, oy_pixel), radius_pixel, (0,0,255), 2)
+                        # Determine fake target position opposite to endpoint
+                        push_distance = ATTACK_DISTANCE
+                        if len(path_t2f) >= 2:
+                            vec_t2f = (path_t2f[1][1] - turret_start[0], path_t2f[1][0] - turret_start[1])
+                        else:
+                            vec_t2f = (center_fire[1] - turret_start[0], center_fire[0] - turret_start[1])
+                        vec_length = np.sqrt(vec_t2f[0]**2 + vec_t2f[1]**2)
+                        if vec_length > 0:
+                            vec_t2f_norm = (vec_t2f[0] / vec_length, vec_t2f[1] / vec_length)
+                            # Calculate unconstrained fake_turret
+                            unconstrained_fake_turret = (
+                                int(round(turret_start[0] - push_distance * vec_t2f_norm[0])),
+                                int(round(turret_start[1] - push_distance * vec_t2f_norm[1]))
+                            )
+                            # Clamp fake_turret to be within 2x2 grid centered on turret_start
+                            fake_turret = (
+                                max(turret_start[0] - 1, min(turret_start[0] + 1, unconstrained_fake_turret[0])),
+                                max(turret_start[1] - 1, min(turret_start[1] + 1, unconstrained_fake_turret[1]))
+                            )
+                        else:
+                            fake_turret = turret_start
+                        # pathfinding ball to fake turret
+                        print(f"DEBUG: Ball start: {ball_start}, Turret start: {turret_start}, Fake turret: {fake_turret}")
+                        print(f"DEBUG: Grid sum (should be >0): {np.sum(grid)}")
+                        bs = (max(0, min(grid_height-1, int(ball_start[1]))), max(0, min(grid_width-1, int(ball_start[0]))))
+                        ts = (max(0, min(grid_height-1, int(fake_turret[1]))), max(0, min(grid_width-1, int(fake_turret[0]))))
+                        path_b2t = tcod.path.path2d(cost=grid, start_points=[bs], end_points=[ts], cardinal=10, diagonal=0)
+                        print(f"DEBUG: path_b2t: {path_b2t}")
+                        if len(path_b2t) > 0:
+                            _, diagonaldown_path_b2t = simplify_path(path_b2t)
+                        else:
+                            diagonaldown_path_b2t = []
+                        print(f"DEBUG: path_b2t length: {len(path_b2t)}, diagonaldown_path_b2t length: {len(diagonaldown_path_b2t)}")
 
-                    # Always run UDP/pathfinding code if possible
-                    if len(diagonaldown_path_b2t) > 1:
-                        print(f"DEBUG: diagonaldown_path_b2t: {diagonaldown_path_b2t}")
-                        dy = diagonaldown_path_b2t[1][0] - ball_start[1]
-                        dx = diagonaldown_path_b2t[1][1] - ball_start[0]
-                        dy, dx = bouncing_ball(dy, dx, ball_start)
-                        if ids is not None and len(ids) > 0:
-                            ball_idx = np.where(ids == ball_id)[0]
-                        else:
-                            ball_idx = np.array([])
-                        if ball_idx.size > 0:
-                            ball_corners_for_yaw = corners[ball_idx[0]]
-                        elif ball_last_corners is not None:
-                            ball_corners_for_yaw = ball_last_corners
-                        else:
-                            ball_corners_for_yaw = None
-                        if ball_corners_for_yaw is not None:
-                            yaw = get_2d_angle_from_corners(ball_corners_for_yaw)
-                            ball_last_yaw = yaw
-                            path_length_b2t = len(path_b2t) * PATH_LENGTH_MULTIPLIER
-                            dx_scaled = dx * path_length_b2t
-                            dy_scaled = dy * path_length_b2t
-                            next_target = np.array([dy_scaled, dx_scaled, compute_theta_send(yaw), angle_b2t])
-                            sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
-                            print (f"9. message: {next_target}, path_length_b2t: {path_length_b2t}")
-                            theta_deg = np.degrees(yaw)
-                            theta_send_deg = np.degrees(compute_theta_send(yaw))
-                            ball_corners_vis = ball_corners_for_yaw.reshape((4, 2))
-                            ball_center_px = ball_corners_vis.mean(axis=0)
-                            arrow_length = 60
-                            arrow_start = (int(ball_center_px[0]), int(ball_center_px[1]))
-                            arrow_end = (int(ball_center_px[0] + arrow_length * np.sin(yaw)),
-                                            int(ball_center_px[1] - arrow_length * np.cos(yaw)))
-                            cv2.arrowedLine(frame, arrow_start, arrow_end, (0, 255, 255), 3, tipLength=0.3)
-                            cv2.putText(frame, f"Theta: {theta_deg:.1f} deg", (10, 30), 
-                                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-                            cv2.putText(frame, f"Theta_send: {theta_send_deg:.1f} deg", (10, 60), 
-                                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-                        else:
-                            print("DEBUG: Not enough points in diagonaldown_path_b2t for UDP/pathfinding. Overlay still shown.")
-                            # Try to run overlays and UDP code anyway for diagnostics
-                            if len(diagonaldown_path_b2t) > 0:
-                                dy = diagonaldown_path_b2t[0][0] - ball_start[1]
-                                dx = diagonaldown_path_b2t[0][1] - ball_start[0]
-                                dy, dx = bouncing_ball(dy, dx, ball_start)
-                                print(f"DEBUG: Fallback dx, dy: {dx}, {dy}")
-                                if ids is not None and len(ids) > 0:
-                                    ball_idx = np.where(ids == ball_id)[0]
-                                else:
-                                    ball_idx = np.array([])
-                                if ball_idx.size > 0:
-                                    ball_corners_for_yaw = corners[ball_idx[0]]
-                                elif ball_last_corners is not None:
-                                    ball_corners_for_yaw = ball_last_corners
-                                else:
-                                    ball_corners_for_yaw = None
-                                if ball_corners_for_yaw is not None:
-                                    yaw = get_2d_angle_from_corners(ball_corners_for_yaw)
-                                    ball_last_yaw = yaw
-                                    path_length_b2t = len(path_b2t) * PATH_LENGTH_MULTIPLIER
-                                    dx_scaled = dx * path_length_b2t
-                                    dy_scaled = dy * path_length_b2t
-                                    next_target = np.array([dy_scaled, dx_scaled, compute_theta_send(yaw), angle_b2t])
-                                    sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
-                                    print (f"9. message (fallback): {next_target}, path_length_b2t: {path_length_b2t}")
+                        # Always run UDP/pathfinding code if possible
+                        if len(diagonaldown_path_b2t) > 1:
+                            print(f"DEBUG: diagonaldown_path_b2t: {diagonaldown_path_b2t}")
+                            dy = diagonaldown_path_b2t[1][0] - ball_start[1]
+                            dx = diagonaldown_path_b2t[1][1] - ball_start[0]
+                            dy, dx = bouncing_ball(dy, dx, ball_start)
+                            if ids is not None and len(ids) > 0:
+                                ball_idx = np.where(ids == ball_id)[0]
+                            else:
+                                ball_idx = np.array([])
+                            if ball_idx.size > 0:
+                                ball_corners_for_yaw = corners[ball_idx[0]]
+                            elif ball_last_corners is not None:
+                                ball_corners_for_yaw = ball_last_corners
+                            else:
+                                ball_corners_for_yaw = None
+                            if ball_corners_for_yaw is not None:
+                                yaw = get_2d_angle_from_corners(ball_corners_for_yaw)
+                                ball_last_yaw = yaw
+                                path_length_b2t = len(path_b2t) * PATH_LENGTH_MULTIPLIER
+                                dx_scaled = dx * path_length_b2t
+                                dy_scaled = dy * path_length_b2t
+                                next_target = np.array([dy_scaled, dx_scaled, compute_theta_send(yaw), angle_b2t])
+                                sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
+                                print (f"9. message: {next_target}, path_length_b2t: {path_length_b2t}")
+                                theta_deg = np.degrees(yaw)
+                                theta_send_deg = np.degrees(compute_theta_send(yaw))
+                                ball_corners_vis = ball_corners_for_yaw.reshape((4, 2))
+                                ball_center_px = ball_corners_vis.mean(axis=0)
+                                arrow_length = 60
+                                arrow_start = (int(ball_center_px[0]), int(ball_center_px[1]))
+                                arrow_end = (int(ball_center_px[0] + arrow_length * np.sin(yaw)),
+                                                int(ball_center_px[1] - arrow_length * np.cos(yaw)))
+                                cv2.arrowedLine(frame, arrow_start, arrow_end, (0, 255, 255), 3, tipLength=0.3)
+                                cv2.putText(frame, f"Theta: {theta_deg:.1f} deg", (10, 30), 
+                                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                                cv2.putText(frame, f"Theta_send: {theta_send_deg:.1f} deg", (10, 60), 
+                                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                            else:
+                                print("DEBUG: Not enough points in diagonaldown_path_b2t for UDP/pathfinding. Overlay still shown.")
+                                # Try to run overlays and UDP code anyway for diagnostics
+                                if len(diagonaldown_path_b2t) > 0:
+                                    dy = diagonaldown_path_b2t[0][0] - ball_start[1]
+                                    dx = diagonaldown_path_b2t[0][1] - ball_start[0]
+                                    dy, dx = bouncing_ball(dy, dx, ball_start)
+                                    print(f"DEBUG: Fallback dx, dy: {dx}, {dy}")
+                                    if ids is not None and len(ids) > 0:
+                                        ball_idx = np.where(ids == ball_id)[0]
+                                    else:
+                                        ball_idx = np.array([])
+                                    if ball_idx.size > 0:
+                                        ball_corners_for_yaw = corners[ball_idx[0]]
+                                    elif ball_last_corners is not None:
+                                        ball_corners_for_yaw = ball_last_corners
+                                    else:
+                                        ball_corners_for_yaw = None
+                                    if ball_corners_for_yaw is not None:
+                                        yaw = get_2d_angle_from_corners(ball_corners_for_yaw)
+                                        ball_last_yaw = yaw
+                                        path_length_b2t = len(path_b2t) * PATH_LENGTH_MULTIPLIER
+                                        dx_scaled = dx * path_length_b2t
+                                        dy_scaled = dy * path_length_b2t
+                                        next_target = np.array([dy_scaled, dx_scaled, compute_theta_send(yaw), angle_b2t])
+                                        sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
+                                        print (f"9. message (fallback): {next_target}, path_length_b2t: {path_length_b2t}")
 
                         # Always show overlays
                         if len(diagonaldown_path_b2t) >= 1:
@@ -1572,15 +1575,18 @@ while True:
                         cv2.drawMarker(frame, fake_fire_pixel, (0,255,255), cv2.MARKER_DIAMOND, 40, 2)
                         text_pos = (fire_pixel[0] + 10, fire_pixel[1] - 10)
                         cv2.putText(frame, str(IsFire_id), text_pos, cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,0), 2, cv2.LINE_AA)
-                        cv2.rectangle(frame, (10, 10), (200, 80), (0, 255, 0), -1)
-                        cv2.putText(frame, 'DEBUG', (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,0,0), 2)
-                        print(f"DEBUG: Showing frame, shape={frame.shape}, dtype={frame.dtype}")
                         cv2.imshow('frame-image', frame)
                         cv2.waitKey(1)
+                        
+                    else:  
+                        # PUSHING MODE - ball is close AND properly aligned (phi within threshold)
+                        print(f"PUSHING MODE - phi: {np.degrees(phi_for_mode):.1f}° (within ±{PHI_THRESHOLD_DEG}°)")
+                        # Reuse the pre-calculated simplified path
+                        diagonaldown_path_t2f = diagonaldown_path_t2f_pre
 
                         # convert to dx, dy instructions for UDP sending
                         # Check if path has at least 2 points before accessing [1]
-                        if len(diagonaldown_path_b2t) < 1:
+                        if len(diagonaldown_path_t2f) < 1:
                             continue
                         
                         # Get ball corners for phi1 calculation - use detected or cached
@@ -1737,6 +1743,7 @@ while True:
                         # Convert markers to pixel coordinates
                         ball_pixel = (int(center_ball[0] * img_w / grid_width), int(center_ball[1] * img_h / grid_height))
                         turret_pixel = (int(turret_start[0] * img_w / grid_width), int(turret_start[1] * img_h / grid_height))
+                        fake_pixel = (int(fake_turret[0] * img_w / grid_width), int(fake_turret[1] * img_h / grid_height))
 
                         # Visualize phi angles in pushing mode
                         phi1_deg = np.degrees(phi1)
@@ -1787,12 +1794,12 @@ while True:
 
                         fire_pixel = (int(center_fire[1] * img_w / grid_width), int(center_fire[0] * img_h / grid_height))
                         cv2.drawMarker(frame, fire_pixel, (255,255,0), cv2.MARKER_DIAMOND, 40, 2)
-                        # Draw the id number next to the endpoint marker
-                        text_pos = (fire_pixel[0] + 10, fire_pixel[1] - 10)
-                        cv2.putText(frame, str(IsFire_id), text_pos, cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,0), 2, cv2.LINE_AA)
+                        fake_fire_pixel = (int(fake_fire[0] * img_w / grid_width), int(fake_fire[1] * img_h / grid_height)) 
+                        cv2.drawMarker(frame, fake_fire_pixel, (0,255,255), cv2.MARKER_DIAMOND, 40, 2)
 
                         cv2.drawMarker(frame, ball_pixel, (0,255,0), cv2.MARKER_TILTED_CROSS, 40, 2)
                         cv2.drawMarker(frame, turret_pixel, (0,0,255), cv2.MARKER_TILTED_CROSS, 40, 2)
+                        cv2.drawMarker(frame, fake_pixel, (255,0,255), cv2.MARKER_DIAMOND, 40, 2)
                         draw_in_range_status(frame, In_range)
                         cv2.imshow('frame-image', frame)
                         cv2.waitKey(1)
