@@ -364,7 +364,7 @@ import math
 # === ArUco Marker Settings ===
 MARKER_SIZE = 40                    # ArUco marker size in mm
 BALL_ID = 8                         # Ball ArUco marker ID
-END_POINTS = {2:[16,10], 4:[6,30]}  # Target endpoints {marker_id: [y, x]}
+END_POINTS = {2:[16,10], 4:[6,30], 3:[10,20]}  # Target endpoints {marker_id: [y, x]}
 # ISFIRE_ID = 9                     # ID of the "fire" command marker
 ISFIRE_ID = 1                       # ID of the "fire" command marker
 TURRET_ID = 10                      # ID of the turret alignment marker
@@ -1229,7 +1229,7 @@ while True:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
         draw_in_range_status(frame, In_range)
-        cv2.imshow('frame-image', frame)
+        # cv2.imshow('frame-image', frame)
 
         # --- Key polling ---
         key = cv2.waitKey(1) & 0xFF
@@ -1576,7 +1576,7 @@ while True:
                         text_pos = (fire_pixel[0] + 10, fire_pixel[1] - 10)
                         cv2.putText(frame, str(IsFire_id), text_pos, cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,0), 2, cv2.LINE_AA)
                         cv2.imshow('frame-image', frame)
-                        cv2.waitKey(1)
+                        # cv2.waitKey(1)
                         
                     else:  
                         # PUSHING MODE - ball is close AND properly aligned (phi within threshold)
@@ -1802,7 +1802,7 @@ while True:
                         cv2.drawMarker(frame, fake_pixel, (255,0,255), cv2.MARKER_DIAMOND, 40, 2)
                         draw_in_range_status(frame, In_range)
                         cv2.imshow('frame-image', frame)
-                        cv2.waitKey(1)
+                        # cv2.waitKey(1)
 
             if quit_flag or mode == 'manual' or IsFire == False:
                 break
