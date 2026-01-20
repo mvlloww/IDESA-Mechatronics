@@ -365,8 +365,7 @@ import math
 MARKER_SIZE = 40                    # ArUco marker size in mm
 BALL_ID = 8                         # Ball ArUco marker ID
 END_POINTS = {2:[16,10], 4:[6,30], 3:[10,20]}  # Target endpoints {marker_id: [y, x]}
-# ISFIRE_ID = 9                     # ID of the "fire" command marker
-ISFIRE_ID = 1                       # ID of the "fire" command marker
+ISFIRE_ID = 9                       # ID of the "fire" command marker
 TURRET_ID = 10                      # ID of the turret alignment marker
 
 # === Grid Settings ===
@@ -1453,28 +1452,28 @@ while True:
                         oy_pixel = int(turret_start[1] * img_h / grid_height)
                         radius_pixel = int(radius * img_w / grid_width)
                         cv2.circle(frame, (ox_pixel, oy_pixel), radius_pixel, (0,0,255), 2)
+
                         # Determine fake target position opposite to endpoint
                         push_distance = ATTACK_DISTANCE
-                        if len(path_t2f) >= 2:
-                            vec_t2f = (path_t2f[1][1] - turret_start[0], path_t2f[1][0] - turret_start[1])
+                        # Use detected turret_corners if visible, else use cached
+                        if ids is not None and turret_id in ids:
+                            turret_idx = np.where(ids == turret_id)[0]
+                            if turret_idx.size > 0:
+                                turret_corners_for_fake = corners[turret_idx[0]]
+                            else:
+                                turret_corners_for_fake = turret_last_corners
                         else:
-                            vec_t2f = (center_fire[1] - turret_start[0], center_fire[0] - turret_start[1])
-                        vec_length = np.sqrt(vec_t2f[0]**2 + vec_t2f[1]**2)
-                        if vec_length > 0:
-                            vec_t2f_norm = (vec_t2f[0] / vec_length, vec_t2f[1] / vec_length)
-                            # Calculate unconstrained fake_turret
-                            unconstrained_fake_turret = (
-                                int(round(turret_start[0] - push_distance * vec_t2f_norm[0])),
-                                int(round(turret_start[1] - push_distance * vec_t2f_norm[1]))
-                            )
-                            # Clamp fake_turret to be within 2x2 grid centered on turret_start
-                            fake_turret = (
-                                max(turret_start[0] - 1, min(turret_start[0] + 1, unconstrained_fake_turret[0])),
-                                max(turret_start[1] - 1, min(turret_start[1] + 1, unconstrained_fake_turret[1]))
-                            )
+                            turret_corners_for_fake = turret_last_corners
+                        if turret_corners_for_fake is not None:
+                            angle2v = get_2d_angle_from_corners(turret_corners_for_fake)
+                            # To get the back of the ArUco marker, reverse the direction
+                            vector_x = np.sin(angle2v)
+                            vector_y = np.cos(angle2v)
+                            fake_turret = (center_turret[0] + vector_x * push_distance, center_turret[1] + vector_y * push_distance)
                         else:
-                            fake_turret = turret_start
-                        # pathfinding ball to fake turret
+                            fake_turret = center_turret  # fallback
+                            print("Fake turret fallback: using center_turret as fake_turret (no corners available)")
+                        
                         print(f"DEBUG: Ball start: {ball_start}, Turret start: {turret_start}, Fake turret: {fake_turret}")
                         print(f"DEBUG: Grid sum (should be >0): {np.sum(grid)}")
                         bs = (max(0, min(grid_height-1, int(ball_start[1]))), max(0, min(grid_width-1, int(ball_start[0]))))
