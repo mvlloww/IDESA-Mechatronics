@@ -1,4 +1,9 @@
-# source ./IDESA/bin/activate
+# Utility function to draw in-range status on the frame
+def draw_in_range_status(frame, in_range):
+    """Draws a status indicator on the frame for in_range status."""
+    status_text = "IN RANGE" if in_range else "OUT OF RANGE"
+    color = (0, 255, 0) if in_range else (0, 0, 255)
+    cv2.putText(frame, status_text, (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3)
 
 def get_endpoint_xy(endpoint_value):
     """Return endpoint as (x, y) ints. Supports [[x, y], flag], [x, y], (x, y), np.ndarray."""
@@ -325,6 +330,9 @@ def get_phi2_turret(center_turret, angle2v):
     
     Returns angle in radians.
     """
+    if angle2v is None:
+        return 0.0  # or np.nan, or raise Exception if preferred
+
     # To get the back of the ArUco marker, reverse the direction
     vector_x = np.sin(angle2v)
     vector_y = np.cos(angle2v)
@@ -332,16 +340,16 @@ def get_phi2_turret(center_turret, angle2v):
     # Ball should be on the OPPOSITE side to push target towards waypoint
     dx_ball_needed = vector_x
     dy_ball_needed = vector_y
-    
+
     # Calculate angle from vertical (same convention as phi1)
-    raw_angle = np.arctan2(dx_ball_needed, -dy_ball_needed)
+    phi2 = np.arctan2(dx_ball_needed, -dy_ball_needed)
 
     # Normalize to [-pi, pi]
     if phi2 > np.pi:
         phi2 -= 2 * np.pi
     elif phi2 < -np.pi:
         phi2 += 2 * np.pi
-    
+
     return phi2
 
 def compute_phi(phi1, phi2):
@@ -418,7 +426,7 @@ ATTACK_DISTANCE = 3                 # Distance ball approaches from opposite sid
 K1_PUSH_GAIN = 1.0                  # Gain for pushing direction
 K2_PHI_GAIN = 0.5                   # Gain for phi correction
 PATH_LENGTH_MULTIPLIER = 1.0        # Multiplier for path length speed scaling (1.0 = use raw path length)
-FAKE_FIRE_DISTANCE = 5              # Distance to simulate water shooting
+FAKE_FIRE_DISTANCE = 3              # Distance to stimulate water shooting
 
 # === Manual Mode ===
 MANUAL_KEY_TIMEOUT = 0.5            # Key hold timeout (seconds)
@@ -786,6 +794,7 @@ while True:
 
                         # Only update obstacles if we have detected markers
                         if ids is not None and len(ids) > 0:
+                            grid.fill(1)
                             grid = grid_obstacle(ids, corners, keys, x_coords, y_coords, grid, radius, frame, grid_width, grid_height)
 
                         if center_ball is not None and center_key is not None:
@@ -1378,9 +1387,6 @@ while True:
                     break
 
                 if center_ball is not None and center_turret is not None and center_fire is not None:
-                    if ids is not None:
-                        grid = grid_obstacle(ids, corners, IsFire_id, x_coords, y_coords, grid, radius, frame, grid_width, grid_height)
-
                     ball_start = center_ball
                     turret_start = center_turret
                     fire_start = center_fire
@@ -1406,17 +1412,89 @@ while True:
                         fake_fire = center_fire  # fallback
                         print("Fake fire fallback: using center_fire as fake_fire (no corners available)")
 
+                    grid.fill(1)
+                    if ids is not None:
+                        ''' ------------------------------------'''
+                        reduced_radius = max(1, int(radius * 0.5))
+                        grid = grid_obstacle(ids, corners, IsFire_id, x_coords, y_coords, grid, reduced_radius, frame, grid_width, grid_height)
+
+                        # Ensure turret, fire, and ball grid cells are open after obstacle placement
+                        bx = int(center_ball[0])
+                        by = int(center_ball[1])
+                        tx = int(center_turret[0])
+                        ty = int(center_turret[1])
+                        fx = int(center_fire[0])
+                        fy = int(center_fire[1])
+                        bx = max(0, min(grid_width-1, bx))
+                        by = max(0, min(grid_height-1, by))
+                        tx = max(0, min(grid_width-1, tx))
+                        ty = max(0, min(grid_height-1, ty))
+                        fx = max(0, min(grid_width-1, fx))
+                        fy = max(0, min(grid_height-1, fy))
+                        grid[by, bx] = 1
+                        grid[ty, tx] = 1
+                        grid[fy, fx] = 1
+                    ''' ------------------------------------'''
                     # pathfinding turret to fire
                     ts = (max(0, min(grid_height-1, int(turret_start[1]))), max(0, min(grid_width-1, int(turret_start[0]))))
                     # Use yellow diamond (fake_fire) for pathfinding endpoint
                     fs = (max(0, min(grid_height-1, int(fake_fire[1]))), max(0, min(grid_width-1, int(fake_fire[0]))))
-                    path_t2f = tcod.path.path2d(cost=grid, start_points=[ts], end_points=[fs], cardinal=10, diagonal=14)
 
-                    # Simplify path for phi2 calculation
+                    print(f"DEBUG: turret_start: {turret_start}, fake_fire: {fake_fire}")
+                    print(f"DEBUG: ts (row,col): {ts}, fs (row,col): {fs}")
+                    print(f"DEBUG: grid.shape: {grid.shape}, grid dtype: {grid.dtype}")
+                    if 0 <= ts[0] < grid.shape[0] and 0 <= ts[1] < grid.shape[1]:
+                        print(f"DEBUG: grid[ts]: {grid[ts]}")
+                    else:
+                        print("DEBUG: ts out of bounds!")
+                    if 0 <= fs[0] < grid.shape[0] and 0 <= fs[1] < grid.shape[1]:
+                        print(f"DEBUG: grid[fs]: {grid[fs]}")
+                    else:
+                        print("DEBUG: fs out of bounds!")
+                    # Print a slice of the grid between ts and fs for visual inspection
+                    min_row = min(ts[0], fs[0])
+                    max_row = max(ts[0], fs[0])
+                    min_col = min(ts[1], fs[1])
+                    max_col = max(ts[1], fs[1])
+                    print("DEBUG: grid region between ts and fs:")
+                    print(grid[min_row:max_row+1, min_col:max_col+1])
+                    # Ensure start and end cells are open for pathfinding
+                    if 0 <= ts[0] < grid.shape[0] and 0 <= ts[1] < grid.shape[1]:
+                        grid[ts] = 1
+                    if 0 <= fs[0] < grid.shape[0] and 0 <= fs[1] < grid.shape[1]:
+                        grid[fs] = 1
+
+                    print(f"DEBUG: Turret grid start: {ts}, Fire grid end: {fs}")
+                    print(f"DEBUG: Grid sum before path_t2f: {np.sum(grid)}")
+                    print(f"DEBUG: Grid shape: {grid.shape}, grid dtype: {grid.dtype}")
+                    print(f"DEBUG: Grid at start (ts): {grid[ts] if 0 <= ts[0] < grid.shape[0] and 0 <= ts[1] < grid.shape[1] else 'OUT OF BOUNDS'}")
+                    print(f"DEBUG: Grid at end (fs): {grid[fs] if 0 <= fs[0] < grid.shape[0] and 0 <= fs[1] < grid.shape[1] else 'OUT OF BOUNDS'}")
+
+                    path_t2f = tcod.path.path2d(cost=grid, start_points=[ts], end_points=[fs], cardinal=10, diagonal=14)
+                    print(f"DEBUG: path_t2f: {path_t2f}")
                     if len(path_t2f) > 0:
                         _, diagonaldown_path_t2f_pre = simplify_path(path_t2f)
                     else:
                         diagonaldown_path_t2f_pre = []
+                    print(f"DEBUG: diagonaldown_path_t2f_pre: {diagonaldown_path_t2f_pre}")
+                    # Print grid region between ts and fs after pathfinding
+                    min_row = min(ts[0], fs[0])
+                    max_row = max(ts[0], fs[0])
+                    min_col = min(ts[1], fs[1])
+                    max_col = max(ts[1], fs[1])
+                    print("DEBUG: grid region between ts and fs (after pathfinding):")
+                    print(grid[min_row:max_row+1, min_col:max_col+1])
+
+                    # Visualize the turret-to-fire path if it exists
+                    if len(path_t2f) > 0:
+                        img_h, img_w = frame.shape[:2]
+                        path_pixels = []
+                        for point in path_t2f:
+                            x_pixel = int(point[1] * img_w / grid_width)
+                            y_pixel = int(point[0] * img_h / grid_height)
+                            path_pixels.append([x_pixel, y_pixel])
+                        path_pixels = np.array(path_pixels, dtype=np.int32)
+                        cv2.polylines(frame, [path_pixels], False, color=(0,255,255), thickness=2)
 
                     # Calculate phi to determine mode
                     phi_for_mode = None
@@ -1452,10 +1530,24 @@ while True:
                                 (ball_start[0] * frame.shape[1] / grid_width, ball_start[1] * frame.shape[0] / grid_height)
                             )
                         # Calculate phi2
-                        next_waypoint_pre = diagonaldown_path_t2f_pre[1]
-                        phi2_pre = get_phi2_angle(turret_start, next_waypoint_pre)
+                        if ids is not None and turret_id in ids:
+                            turret_idx = np.where(ids == turret_id)[0]
+                            if turret_idx.size > 0:
+                                turret_corners_for_fake = corners[turret_idx[0]]
+                            else:
+                                turret_corners_for_fake = turret_last_corners
+                        else:
+                            turret_corners_for_fake = turret_last_corners
+                        
+                        if turret_corners_for_fake is not None:
+                            angle2v = get_2d_angle_from_corners(turret_corners_for_fake)
+                        else:
+                            angle2v = None
+
+                        phi2_pre = get_phi2_turret(center_turret, angle2v)
                         # Calculate phi (angular difference)
                         phi_for_mode = compute_phi(phi1_pre, phi2_pre)
+                        print('phi for mode', phi_for_mode)
 
                     ball_is_close = abs(ball_start[0] - turret_start[0]) <= BALL_TURRET_DISTANCE and abs(ball_start[1] - turret_start[1]) <= BALL_TURRET_DISTANCE
                     phi_is_aligned = phi_for_mode is not None and abs(np.degrees(phi_for_mode)) <= PHI_THRESHOLD_DEG
@@ -1466,12 +1558,12 @@ while True:
                         phi_str = f"{np.degrees(phi_for_mode):.1f}" if phi_for_mode is not None else "N/A"
                         print(f"BALL-TO-TURRET MODE - close: {ball_is_close}, phi: {phi_str}° (threshold: ±{PHI_THRESHOLD_DEG}°)")
                         print(f"DEBUG: path_t2f length: {len(path_t2f) if 'path_t2f' in locals() else 'N/A'} diagonaldown_path_b2t length: {len(diagonaldown_path_b2t) if 'diagonaldown_path_b2t' in locals() else 'N/A'}")
-                        # Set target to obstacle
-                        mask = (x_coords - turret_start[0])**2 + (y_coords - turret_start[1])**2 <= radius**2
+                        # Set fire to obstacle
+                        mask = (x_coords - center_fire [0])**2 + (y_coords - center_fire[1])**2 <= radius**2
                         grid[mask] = 0
                         img_h, img_w = frame.shape[:2]
-                        ox_pixel = int(turret_start[0] * img_w / grid_width)
-                        oy_pixel = int(turret_start[1] * img_h / grid_height)
+                        ox_pixel = int(center_fire[0] * img_w / grid_width)
+                        oy_pixel = int(center_fire[1] * img_h / grid_height)
                         radius_pixel = int(radius * img_w / grid_width)
                         cv2.circle(frame, (ox_pixel, oy_pixel), radius_pixel, (0,0,255), 2)
 
@@ -1502,10 +1594,9 @@ while True:
                         ts = (max(0, min(grid_height-1, int(fake_turret[1]))), max(0, min(grid_width-1, int(fake_turret[0]))))
                         path_b2t = tcod.path.path2d(cost=grid, start_points=[bs], end_points=[ts], cardinal=10, diagonal=0)
                         print(f"DEBUG: path_b2t: {path_b2t}")
+                        diagonaldown_path_b2t = []  # Always define before use
                         if len(path_b2t) > 0:
                             _, diagonaldown_path_b2t = simplify_path(path_b2t)
-                        else:
-                            diagonaldown_path_b2t = []
                         print(f"DEBUG: path_b2t length: {len(path_b2t)}, diagonaldown_path_b2t length: {len(diagonaldown_path_b2t)}")
 
                         # Always run UDP/pathfinding code if possible
@@ -1604,6 +1695,36 @@ while True:
                         print(f"PUSHING MODE - phi: {np.degrees(phi_for_mode):.1f}° (within ±{PHI_THRESHOLD_DEG}°)")
                         # Reuse the pre-calculated simplified path
                         diagonaldown_path_t2f = diagonaldown_path_t2f_pre
+
+                        # Determine fake target position opposite to endpoint
+                        push_distance = ATTACK_DISTANCE
+                        # Use detected turret_corners if visible, else use cached
+                        if ids is not None and turret_id in ids:
+                            turret_idx = np.where(ids == turret_id)[0]
+                            if turret_idx.size > 0:
+                                turret_corners_for_fake = corners[turret_idx[0]]
+                            else:
+                                turret_corners_for_fake = turret_last_corners
+                        else:
+                            turret_corners_for_fake = turret_last_corners
+                        if turret_corners_for_fake is not None:
+                            angle2v = get_2d_angle_from_corners(turret_corners_for_fake)
+                            # To get the back of the ArUco marker, reverse the direction
+                            vector_x = np.sin(angle2v)
+                            vector_y = np.cos(angle2v)
+                            fake_turret = (center_turret[0] + vector_x * push_distance, center_turret[1] + vector_y * push_distance)
+                        else:
+                            fake_turret = center_turret  # fallback
+                            print("Fake turret fallback: using center_turret as fake_turret (no corners available)")
+                        
+                        bs = (max(0, min(grid_height-1, int(ball_start[1]))), max(0, min(grid_width-1, int(ball_start[0]))))
+                        ts = (max(0, min(grid_height-1, int(fake_turret[1]))), max(0, min(grid_width-1, int(fake_turret[0]))))
+                        path_b2t = tcod.path.path2d(cost=grid, start_points=[bs], end_points=[ts], cardinal=10, diagonal=0)
+                        print(f"DEBUG: path_b2t: {path_b2t}")
+                        diagonaldown_path_b2t = []  # Always define before use
+                        if len(path_b2t) > 0:
+                            _, diagonaldown_path_b2t = simplify_path(path_b2t)
+
 
                         # convert to dx, dy instructions for UDP sending
                         # Check if path has at least 2 points before accessing [1]
