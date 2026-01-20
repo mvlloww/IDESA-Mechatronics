@@ -12,66 +12,59 @@ def get_endpoint_xy(endpoint_value):
                 return (int(first[0]), int(first[1]))
             except Exception:
                 return None
-    # Handle [x, y] or (x, y)
-    if isinstance(endpoint_value, (list, tuple, np.ndarray)) and len(endpoint_value) == 2:
-        try:
-            return (int(endpoint_value[0]), int(endpoint_value[1]))
-        except Exception:
-            return None
-    return None
 
-def draw_in_range_status(frame, in_range_dict):
-    """Draw the In_range status on the bottom left of the frame."""
-    img_h, img_w = frame.shape[:2]
-    # Build status text
-    status_lines = ["In Range:"]
-    for marker_id, is_in_range in sorted(in_range_dict.items()):
-        status = "YES" if is_in_range else "NO"
-        status_lines.append(f"  ID {marker_id}: {status}")
-    
-    # Draw each line from bottom up
-    line_height = 25
-    start_y = img_h - 20 - (len(status_lines) - 1) * line_height
-    for i, line in enumerate(status_lines):
-        y_pos = start_y + i * line_height
-        # Draw background rectangle for better visibility
-        cv2.putText(frame, line, (10, y_pos), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3)  # Black outline
-        cv2.putText(frame, line, (10, y_pos), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)  # Green text
+    # Calculating gamma
+    # Get ball corners for gamma1 calculation - use detected or cached
+    if ids is not None and len(ids) > 0:
+        ball_idx_gamma = np.where(ids == ball_id)[0]
+    else:
+        ball_idx_gamma = np.array([])
+    if ball_idx_gamma.size > 0:
+        ball_corners_for_gamma = corners[ball_idx_gamma[0]]
+    elif ball_last_corners is not None:
+        ball_corners_for_gamma = ball_last_corners
+    else:
+        ball_corners_for_gamma = None
 
-def draw_wasd_keys(frame, pressed_key=None, dy=0, dx=0):
-    """Draw WASD key visual on bottom right of frame. Highlight pressed key and show dx/dy values."""
-    img_h, img_w = frame.shape[:2]
-    
-    # Key box dimensions
-    key_size = 50
-    gap = 5
-    
-    # Position (bottom right)
-    base_x = img_w - (3 * key_size + 2 * gap) - 20  # 3 keys wide
-    base_y = img_h - (2 * key_size + gap) - 60      # 2 keys tall + space for text
-    
-    # Key positions: W on top, A-S-D on bottom row
-    keys = {
-        'W': (base_x + key_size + gap, base_y),
-        'A': (base_x, base_y + key_size + gap),
-        'S': (base_x + key_size + gap, base_y + key_size + gap),
-        'D': (base_x + 2 * (key_size + gap), base_y + key_size + gap)
-    }
-    
-    # Colors
-    color_normal = (80, 80, 80)      # Dark gray
-    color_pressed = (0, 255, 0)      # Green when pressed
-    color_text = (255, 255, 255)     # White text
-    
-    # Draw each key
-    for key_char, (kx, ky) in keys.items():
-        # Check if this key is pressed
-        is_pressed = (pressed_key == key_char.lower())
-        box_color = color_pressed if is_pressed else color_normal
+    # Get target corners for gamma1 calculation - use detected or cached
+    # Get gamma facing turret back #
+    if turret_visible:
+        turret_corners_for_gamma = corners[np.where(ids == turret_id)[0][0]]
+    elif turret_last_corners is not None:
+        turret_corners_for_gamma = turret_last_corners
+    else:
+        turret_corners_for_gamma = None
+
+    # Calculate gamma1 using PIXEL coordinates for fine resolution
+    if ball_corners_for_gamma is not None and turret_corners_for_gamma is not None:
+        # Get pixel centers from corners
+        ball_pts = ball_corners_for_gamma.reshape((4, 2))
+        ball_center_px = ball_pts.mean(axis=0)  # (x, y) in pixels
+        turret_pts = turret_corners_for_gamma.reshape((4, 2))
+        turret_center_px = turret_pts.mean(axis=0)  # (x, y) in pixels
+        # gamma1: angle from vertical (from target center) to ball center using pixels
+        gamma1 = get_phi1_angle(turret_center_px, ball_center_px)
+    else:
+        # Fallback to grid-based if corners not available
+        gamma1 = get_phi1_angle(
+            (turret_start[0] * frame.shape[1] / grid_width, turret_start[1] * frame.shape[0] / grid_height),
+            (ball_start[0] * frame.shape[1] / grid_width, ball_start[1] * frame.shape[0] / grid_height)
+        )
+
+    # gamma2: required angle where ball should be
+    if ids is not None and turret_id in ids:
+        turret_idx = np.where(ids == turret_id)[0]
+        if turret_idx.size > 0:
+            turret_corners_for_fake = corners[turret_idx[0]]
+        else:
+            turret_corners_for_fake = turret_last_corners
+    else:
+        turret_corners_for_fake = turret_last_corners
+    if turret_corners_for_fake is not None:
+        angle2v = get_2d_angle_from_corners(turret_corners_for_fake)
+
         thickness = -1 if is_pressed else 2  # Filled if pressed, outline if not
-        
+
         # Draw key box
         cv2.rectangle(frame, (kx, ky), (kx + key_size, ky + key_size), box_color, thickness)
         if not is_pressed:
@@ -314,6 +307,35 @@ def get_phi2_angle(target_center, next_waypoint):
     snap_interval = np.pi / 4
     phi2 = round(raw_angle / snap_interval) * snap_interval
     
+    # Normalize to [-pi, pi]
+    if phi2 > np.pi:
+        phi2 -= 2 * np.pi
+    elif phi2 < -np.pi:
+        phi2 += 2 * np.pi
+    
+    return phi2
+
+def get_phi2_turret(center_turret, angle2v):
+    """
+    Calculate phi2: required angle where ball should be to push turret from the back.
+    This is the OPPOSITE direction of where the turret needs to face.
+
+    Parameters:
+    - center_turret: (x, y) grid coordinates of turret ArUco center
+    
+    Returns angle in radians.
+    """
+    # To get the back of the ArUco marker, reverse the direction
+    vector_x = np.sin(angle2v)
+    vector_y = np.cos(angle2v)
+
+    # Ball should be on the OPPOSITE side to push target towards waypoint
+    dx_ball_needed = vector_x
+    dy_ball_needed = vector_y
+    
+    # Calculate angle from vertical (same convention as phi1)
+    raw_angle = np.arctan2(dx_ball_needed, -dy_ball_needed)
+
     # Normalize to [-pi, pi]
     if phi2 > np.pi:
         phi2 -= 2 * np.pi
@@ -1588,11 +1610,13 @@ while True:
                         if len(diagonaldown_path_t2f) < 1:
                             continue
                         
+                        # Calculating phi
                         # Get ball corners for phi1 calculation - use detected or cached
                         if ids is not None and len(ids) > 0:
                             ball_idx_phi = np.where(ids == ball_id)[0]
                         else:
                             ball_idx_phi = np.array([])
+
                         if ball_idx_phi.size > 0:
                             ball_corners_for_phi = corners[ball_idx_phi[0]]
                         elif ball_last_corners is not None:
@@ -1601,13 +1625,14 @@ while True:
                             ball_corners_for_phi = None
                         
                         # Get target corners for phi1 calculation - use detected or cached
+                        # Get phi facing turret back #
                         if turret_visible:
                             turret_corners_for_phi = corners[np.where(ids == turret_id)[0][0]]
                         elif turret_last_corners is not None:
                             turret_corners_for_phi = turret_last_corners
                         else:
                             turret_corners_for_phi = None
-                        
+
                         # Calculate phi1 using PIXEL coordinates for fine resolution
                         if ball_corners_for_phi is not None and turret_corners_for_phi is not None:
                             # Get pixel centers from corners
@@ -1624,23 +1649,72 @@ while True:
                                 (turret_start[0] * frame.shape[1] / grid_width, turret_start[1] * frame.shape[0] / grid_height),
                                 (ball_start[0] * frame.shape[1] / grid_width, ball_start[1] * frame.shape[0] / grid_height)
                             )
-                        # phi2: required angle where ball should be (snapped to 45 deg intervals)
                         
-                        # Use next waypoint from path_t2f (target to endpoint path)
-                        next_waypoint = diagonaldown_path_b2t[1]  # (i, j) = (y, x) format
-                        phi2 = get_phi2_angle(turret_start, next_waypoint)
+                        # phi2: required angle where ball should be
+                        if ids is not None and turret_id in ids:
+                            turret_idx = np.where(ids == turret_id)[0]
+                            if turret_idx.size > 0:
+                                turret_corners_for_fake = corners[turret_idx[0]]
+                            else:
+                                turret_corners_for_fake = turret_last_corners
+                        else:
+                            turret_corners_for_fake = turret_last_corners
+                        if turret_corners_for_fake is not None:
+                            angle2v = get_2d_angle_from_corners(turret_corners_for_fake)
+
+                        phi2 = get_phi2_turret(center_turret, angle2v)
                         
                         # phi: difference between current and required ball position
                         phi = compute_phi(phi1, phi2)
                         
                         # Print phi values for debugging
                         print(f"PUSHING MODE - phi1: {np.degrees(phi1):.1f}°, phi2: {np.degrees(phi2):.1f}°, phi: {np.degrees(phi):.1f}°")
+
+                        # Calculating gamma
+                        # gamma 1 angle of fire to vertical
+                        if ids is not None and IsFire_id in ids:
+                            fire_idx = np.where(ids == IsFire_id)[0]
+                            if fire_idx.size > 0:
+                                fire_corners_for_fake = corners[fire_idx[0]]
+                            else:
+                                fire_corners_for_fake = fire_last_corners
+                        else:
+                            fire_corners_for_fake = fire_last_corners
+
+                        if fire_corners_for_fake is not None:
+                            gamma1 = get_2d_angle_from_corners(fire_corners_for_fake)
+                        else:
+                            gamma1 = None
+
+                        #gamma 2 = angle of forward of turret to vertical
+                        if ids is not None and turret_id in ids:
+                            turret_idx = np.where(ids == turret_id)[0]
+                            if turret_idx.size > 0:
+                                turret_corners_for_fake = corners[turret_idx[0]]
+                            else:
+                                turret_corners_for_fake = turret_last_corners
+                        else:
+                            turret_corners_for_fake = turret_last_corners
+                        if turret_corners_for_fake is not None:
+                            gamma2 = get_2d_angle_from_corners(turret_corners_for_fake)
+                        else:
+                            gamma2 = None
                         
+                        gamma = gamma1 + gamma2
+
+                        # Normalize to [-gamma, gamma] for shortest rotation
+                        while gamma > np.pi:
+                            gamma -= 2 * np.pi
+                        while gamma < -np.pi:
+                            gamma += 2 * np.pi
+                        # Print gamma values for debugging
+                        print(f"PUSHING MODE - gamma1: {np.degrees(gamma1):.1f}°, gamma2: {np.degrees(gamma2):.1f}°, gamma: {np.degrees(gamma):.1f}°")
+                            
                         # ===== CONTROL SYSTEM FOR BALL MOVEMENT =====
                         k1 = K1_PUSH_GAIN
                         k2 = K2_PHI_GAIN
                         
-                        # dx1, dy1: Direction to push target towards waypoint
+                        # dx1, dy1: Direction to push turret by ball
                         dy1 = diagonaldown_path_b2t[1][0] - turret_start[1]
                         dx1 = diagonaldown_path_b2t[1][1] - turret_start[0]
                         dy1, dx1 = bouncing_ball(dy1, dx1, ball_start)
@@ -1664,13 +1738,33 @@ while True:
                         # Note: In grid coords, x is horizontal (columns), y is vertical (rows)
                         dx2 = ball_rel_x_desired - ball_rel_x_current
                         dy2 = ball_rel_y_desired - ball_rel_y_current
+
+                        # dx3, dy3: Direction to move turret to face fire (gamma correction)
+                        # Calculate using trigonometry - positions on a circle around turret
+                        # Get the radius from turret to fire (in grid units)
+                        radius_ball_to_fire = np.sqrt((fire_start[0] - turret_start[0])**2 + 
+                                                            (fire_start[1] - turret_start[1])**2)
+                        
+                        # Current ball position relative to turret (at angle gamma1)
+                        # Using convention: x = r*sin(gamma), y = -r*cos(gamma) where 0° is up
+                        ball_rel_x_current_3 = radius_ball_to_fire * np.sin(gamma1)
+                        ball_rel_y_current_3 = -radius_ball_to_fire * np.cos(gamma1)
+                        
+                        # Desired ball position relative to turret (at angle gamma2)
+                        ball_rel_x_desired_3 = radius_ball_to_fire * np.sin(gamma2)
+                        ball_rel_y_desired_3 = -radius_ball_to_fire * np.cos(gamma2)
+                        
+                        # dx2, dy2: Vector from current to desired position
+                        # Note: In grid coords, x is horizontal (columns), y is vertical (rows)
+                        dx3 = ball_rel_x_desired_3 - ball_rel_x_current_3
+                        dy3 = ball_rel_y_desired_3 - ball_rel_y_current_3
                         
                         # Combine dx1/dy1 (push direction) with dx2/dy2 (phi correction)
-                        dx_out = (k1 * dx1) + (k2 * dx2)
-                        dy_out = (k1 * dy1) + (k2 * dy2)
+                        dx_out = (k1 * dx1) + (k2 * dx2) + (k2 * dx3)
+                        dy_out = (k1 * dy1) + (k2 * dy2) + (k2 * dy3)
                         
                         # Print control values for debugging
-                        print(f"  dx1={dx1:.2f}, dy1={dy1:.2f} | dx2={dx2:.2f}, dy2={dy2:.2f} | dx_out={dx_out:.2f}, dy_out={dy_out:.2f}")
+                        print(f"  dx1={dx1:.2f}, dy1={dy1:.2f} | dx2={dx2:.2f}, dy2={dy2:.2f} | dx3={dx3:.2f}, dy3={dy3:.2f} | dx_out={dx_out:.2f}, dy_out={dy_out:.2f}")
 
                         # Get ball corners - use detected or cached
                         if ids is not None and len(ids) > 0:
@@ -1776,17 +1870,48 @@ while True:
                         # phi - difference (green)
                         cv2.putText(frame, f"phi:  {phi_deg:+7.1f} deg", (panel_x, panel_y + 100), 
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+                        # Visualize gamma angles in pushing mode
+                        gamma1_deg = np.degrees(gamma1) if gamma1 is not None else None
+                        gamma2_deg = np.degrees(gamma2) if gamma2 is not None else None
+                        gamma_deg = np.degrees(gamma) if gamma is not None else None
+                        # Draw gamma1 arrow (orange) - from turret to fire direction
+                        gamma_arrow_length = 50
+                        if gamma1 is not None:
+                            gamma1_end = (int(turret_pixel[0] + gamma_arrow_length * np.sin(gamma1)),
+                                         int(turret_pixel[1] - gamma_arrow_length * np.cos(gamma1)))
+                            cv2.arrowedLine(frame, turret_pixel, gamma1_end, (255, 165, 0), 2, tipLength=0.3)  # Orange
+                        if gamma2 is not None:
+                            gamma2_end = (int(turret_pixel[0] + gamma_arrow_length * np.sin(gamma2)),
+                                         int(turret_pixel[1] - gamma_arrow_length * np.cos(gamma2)))
+                            cv2.arrowedLine(frame, turret_pixel, gamma2_end, (0, 128, 255), 2, tipLength=0.3)  # Blue-Orange
+
+                        # Display PUSHING MODE gamma panel below phi panel
+                        gamma_panel_y = panel_y + 240
+                        cv2.rectangle(frame, (panel_x - 10, gamma_panel_y - 5), (img_w - 10, gamma_panel_y + 110), (0, 0, 0), -1)
+                        cv2.rectangle(frame, (panel_x - 10, gamma_panel_y - 5), (img_w - 10, gamma_panel_y + 110), (255, 255, 255), 2)
+                        cv2.putText(frame, "GAMMA (Fire Alignment)", (panel_x, gamma_panel_y + 20), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 165, 0), 2)  # Orange header
+                        # gamma1 - fire angle (orange)
+                        cv2.putText(frame, f"gamma1: {gamma1_deg:+7.1f} deg" if gamma1_deg is not None else "gamma1: N/A", (panel_x, gamma_panel_y + 50), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 165, 0), 2)
+                        # gamma2 - turret forward angle (blue-orange)
+                        cv2.putText(frame, f"gamma2: {gamma2_deg:+7.1f} deg" if gamma2_deg is not None else "gamma2: N/A", (panel_x, gamma_panel_y + 75), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 128, 255), 2)
+                        # gamma - difference (green)
+                        cv2.putText(frame, f"gamma:  {gamma_deg:+7.1f} deg" if gamma_deg is not None else "gamma: N/A", (panel_x, gamma_panel_y + 100), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                         
                         # Control equation display
                         cv2.putText(frame, "--- Control ---", (panel_x, panel_y + 125), 
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
                         # dx equation
-                        cv2.putText(frame, f"dx: ({k1:.1f}*{dx1:+.1f})+({k2:.1f}*{dx2:+.1f})", (panel_x, panel_y + 150), 
+                        cv2.putText(frame, f"dx: ({k1:.1f}*{dx1:+.1f})+({k2:.1f}*{dx2:+.1f})+({k2:.1f}*{dx3:+.1f})", (panel_x, panel_y + 150), 
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 100), 1)
                         cv2.putText(frame, f"   = {dx_out:+.2f}", (panel_x, panel_y + 170), 
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 100), 2)
                         # dy equation
-                        cv2.putText(frame, f"dy: ({k1:.1f}*{dy1:+.1f})+({k2:.1f}*{dy2:+.1f})", (panel_x, panel_y + 195), 
+                        cv2.putText(frame, f"dy: ({k1:.1f}*{dy1:+.1f})+({k2:.1f}*{dy2:+.1f})+({k2:.1f}*{dy3:+.1f})", (panel_x, panel_y + 195), 
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 200, 255), 1)
                         cv2.putText(frame, f"   = {dy_out:+.2f}", (panel_x, panel_y + 215), 
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 200, 255), 2)
