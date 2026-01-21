@@ -88,6 +88,38 @@ def send_fire_udp(value, ip, port):
     except socket.error as e:
         print(f"Fire UDP send error: {e}")
 
+def draw_fire_udp_debug(frame, dx, dy, theta_deg, state):
+    """Draw debug panel showing UDP values being sent during fire state."""
+    img_h, img_w = frame.shape[:2]
+    
+    # Panel position (top left, below any fire alert text)
+    panel_x = 10
+    panel_y = 120
+    
+    # Draw semi-transparent background
+    cv2.rectangle(frame, (panel_x - 5, panel_y - 5), (panel_x + 280, panel_y + 120), (0, 0, 0), -1)
+    cv2.rectangle(frame, (panel_x - 5, panel_y - 5), (panel_x + 280, panel_y + 120), (0, 165, 255), 2)  # Orange border
+    
+    # Header
+    cv2.putText(frame, "FIRE UDP DEBUG", (panel_x, panel_y + 20), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)  # Orange
+    
+    # State
+    cv2.putText(frame, f"State: {state}", (panel_x, panel_y + 45), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    
+    # dx value
+    cv2.putText(frame, f"dx: {dx:+8.1f}", (panel_x, panel_y + 70), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 200, 255), 2)  # Light blue
+    
+    # dy value
+    cv2.putText(frame, f"dy: {dy:+8.1f}", (panel_x, panel_y + 95), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 255, 200), 2)  # Light green
+    
+    # theta value
+    cv2.putText(frame, f"theta: {theta_deg:+7.1f} deg", (panel_x, panel_y + 115), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)  # Yellow
+
 def draw_wasd_keys(frame, pressed_key=None, dy=0, dx=0):
     """Draw WASD key visual on bottom right of frame. Highlight pressed key and show dx/dy values."""
     img_h, img_w = frame.shape[:2]
@@ -474,15 +506,16 @@ import math
 ''' ====================== CONFIGURATION CONSTANTS ====================== '''
 # === ArUco Marker Settings ===
 MARKER_SIZE = 40                    # ArUco marker size in mm
-BALL_ID = 8                         # Ball ArUco marker ID
+BALL_ID = 9                         # Ball ArUco marker ID
 TURRET_ID = 10                      # Water turret ArUco marker ID
-TURRET_ENDPOINT_DISTANCE = 6        # Grid squares north of turret for endpoint
-END_POINTS = {1:[15,6], 2:[5,20], 3:[15,34]}  # Target endpoints {marker_id: [y, x]}
+TURRET_ENDPOINT_DISTANCE = 4        # Grid squares north of turret for endpoint
+END_POINTS = {1:[15,8], 2:[5,20], 3:[15,34]}  # Target endpoints {marker_id: [y, x]}
+#END_POINTS = {1:[18,8], 2:[5,17], 3:[15,34], 4:[10,12], 5:[5,23], 6:[12,30]}
 
 # === Grid Settings ===
-GRID_HEIGHT = 20                    # Grid rows
-GRID_WIDTH = 40                     # Grid columns
-OBSTACLE_RADIUS = 2               # Radius around obstacles (grid units)
+GRID_HEIGHT = 40                    # Grid rows
+GRID_WIDTH = 80                     # Grid columns
+OBSTACLE_RADIUS = 4               # Radius around obstacles (grid units)
 
 # === Camera Settings ===
 CAMERA_WIDTH = 1920                 # Camera resolution width
@@ -496,8 +529,8 @@ FIRE_UDP_IP = "138.38.226.213"      # Fire system UDP IP address
 FIRE_UDP_PORT = 50001               # Fire system UDP port
 
 # === Fire Mode Timing ===
-FIRE_INITIAL_WAIT_MIN = 30.0        # Minimum seconds to wait before starting fire response
-FIRE_INITIAL_WAIT_MAX = 60.0        # Maximum seconds to wait before starting fire response
+FIRE_INITIAL_WAIT_MIN = 5        # Minimum seconds to wait before starting fire response
+FIRE_INITIAL_WAIT_MAX = 30        # Maximum seconds to wait before starting fire response
 FIRE_WAIT_BEFORE_ON = 5.0           # Seconds to wait before sending UDP 1 (turret on)
 FIRE_WAIT_BEFORE_OFF = 2.0          # Seconds after UDP 1 before sending UDP 0 (turret off)
 FIRE_WAIT_AFTER_OFF = 3.0           # Seconds after UDP 0 before showing "Fire Extinguished!"
@@ -844,6 +877,11 @@ while True:
                     if isFire:
                         img_h, img_w = frame.shape[:2]
                         
+                        # Track UDP values for debug display
+                        fire_udp_dx = 0
+                        fire_udp_dy = 0
+                        fire_udp_theta_deg = 0
+                        
                         # Handle fire sequence state machine (for when target reached turret endpoint)
                         current_time = time.perf_counter()
                         
@@ -852,6 +890,9 @@ while True:
                             if ids is not None and ball_id in ids.flatten():
                                 ball_idx_wait = np.where(ids == ball_id)[0][0]
                                 yaw_wait = get_2d_angle_from_corners(corners[ball_idx_wait])
+                                fire_udp_dx = 0
+                                fire_udp_dy = 0
+                                fire_udp_theta_deg = np.degrees(compute_theta_send(yaw_wait))
                                 sock.sendto(struct.pack('<iif', 0, 0, float(compute_theta_send(yaw_wait))), (UDP_IP, UDP_PORT))
                             if current_time - fire_reached_time >= FIRE_WAIT_BEFORE_ON:
                                 # Send UDP 1
@@ -863,6 +904,9 @@ while True:
                             if ids is not None and ball_id in ids.flatten():
                                 ball_idx_wait = np.where(ids == ball_id)[0][0]
                                 yaw_wait = get_2d_angle_from_corners(corners[ball_idx_wait])
+                                fire_udp_dx = 0
+                                fire_udp_dy = 0
+                                fire_udp_theta_deg = np.degrees(compute_theta_send(yaw_wait))
                                 sock.sendto(struct.pack('<iif', 0, 0, float(compute_theta_send(yaw_wait))), (UDP_IP, UDP_PORT))
                             if current_time - fire_reached_time >= FIRE_WAIT_BEFORE_OFF:
                                 # Send UDP 0
@@ -874,13 +918,27 @@ while True:
                             if ids is not None and ball_id in ids.flatten():
                                 ball_idx_wait = np.where(ids == ball_id)[0][0]
                                 yaw_wait = get_2d_angle_from_corners(corners[ball_idx_wait])
+                                fire_udp_dx = 0
+                                fire_udp_dy = 0
+                                fire_udp_theta_deg = np.degrees(compute_theta_send(yaw_wait))
                                 sock.sendto(struct.pack('<iif', 0, 0, float(compute_theta_send(yaw_wait))), (UDP_IP, UDP_PORT))
                             if current_time - fire_reached_time >= FIRE_WAIT_AFTER_OFF:
                                 fire_sequence_state = 'firefighted'
+                        elif fire_sequence_state == 'firefighted':
+                            # Keep sending 0 dx/dy during firefighted state
+                            if ids is not None and ball_id in ids.flatten():
+                                ball_idx_wait = np.where(ids == ball_id)[0][0]
+                                yaw_wait = get_2d_angle_from_corners(corners[ball_idx_wait])
+                                fire_udp_dx = 0
+                                fire_udp_dy = 0
+                                fire_udp_theta_deg = np.degrees(compute_theta_send(yaw_wait))
+                                sock.sendto(struct.pack('<iif', 0, 0, float(compute_theta_send(yaw_wait))), (UDP_IP, UDP_PORT))
                         
                         # Display appropriate text based on state
                         if fire_sequence_state == 'firefighted':
                             draw_firefighted_alert(frame)
+                            # Draw debug panel for firefighted state
+                            draw_fire_udp_debug(frame, fire_udp_dx, fire_udp_dy, fire_udp_theta_deg, fire_sequence_state)
                             cv2.imshow('frame-image', frame)
                             continue
                         else:
@@ -926,6 +984,10 @@ while True:
                                         yaw_fire_stop = get_2d_angle_from_corners(corners[ball_idx_fire_stop])
                                         next_target_stop = np.array([0, 0, compute_theta_send(yaw_fire_stop), 0])
                                         sock.sendto(struct.pack('<iif', 0, 0, float(next_target_stop[2])), (UDP_IP, UDP_PORT))
+                                        # Update debug display values
+                                        fire_udp_dx = 0
+                                        fire_udp_dy = 0
+                                        fire_udp_theta_deg = np.degrees(compute_theta_send(yaw_fire_stop))
                                         print(f"FIRE: Target reached - sending dx=0, dy=0, theta={np.degrees(yaw_fire_stop):.1f}°")
                                 elif ball_visible_fire:
                                     # Do pathfinding and control to push fire target to turret endpoint
@@ -1028,6 +1090,10 @@ while True:
                                                 dy_scaled = 0
                                             next_target_fire = np.array([dy_scaled, dx_scaled, compute_theta_send(yaw_fire), angle_b2t_fire])
                                             sock.sendto(struct.pack('<iif', int(next_target_fire[0]), int(next_target_fire[1]), float(next_target_fire[2])), (UDP_IP, UDP_PORT))
+                                            # Update debug display values
+                                            fire_udp_dx = dx_scaled
+                                            fire_udp_dy = dy_scaled
+                                            fire_udp_theta_deg = np.degrees(compute_theta_send(yaw_fire))
                                             print(f"FIRE PUSHING: dx={dx_scaled:.1f}, dy={dy_scaled:.1f}, phi={np.degrees(phi):.1f}°")
                                             
                                             # Draw path from target to turret endpoint
@@ -1093,6 +1159,10 @@ while True:
                                                         dy_scaled = 0
                                                     next_target_fire = np.array([dy_scaled, dx_scaled, compute_theta_send(yaw_fire), angle_b2t_fire])
                                                     sock.sendto(struct.pack('<iif', int(next_target_fire[0]), int(next_target_fire[1]), float(next_target_fire[2])), (UDP_IP, UDP_PORT))
+                                                    # Update debug display values
+                                                    fire_udp_dx = dx_scaled
+                                                    fire_udp_dy = dy_scaled
+                                                    fire_udp_theta_deg = np.degrees(compute_theta_send(yaw_fire))
                                                     print(f"FIRE B2T: dx={dx_scaled:.1f}, dy={dy_scaled:.1f}")
                                                     
                                                     # Draw path
@@ -1108,6 +1178,8 @@ while True:
                                             fake_pixel_fire = (int(fake_target_fire[0] * img_w / grid_width), int(fake_target_fire[1] * img_h / grid_height))
                                             cv2.drawMarker(frame, fake_pixel_fire, (255, 0, 255), cv2.MARKER_DIAMOND, 30, 2)
                         
+                        # Draw fire UDP debug panel
+                        draw_fire_udp_debug(frame, fire_udp_dx, fire_udp_dy, fire_udp_theta_deg, fire_sequence_state)
                         cv2.imshow('frame-image', frame)
                         continue
 
@@ -1822,6 +1894,7 @@ while True:
             print('no movement key pressed')
 
         sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
+        print(f"MANUAL UDP: dx={int(next_target[1])}, dy={int(next_target[0])}, theta={np.degrees(next_target[2]):.1f}° (raw yaw={np.degrees(yaw):.1f}°)")
         
         # Draw WASD visual (only in manual mode)
         draw_wasd_keys(frame, pressed_key=pressed_key, dy=next_target[0], dx=next_target[1])
