@@ -40,6 +40,86 @@ def draw_in_range_status(frame, in_range_dict):
         cv2.putText(frame, line, (10, y_pos), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)  # Green text
 
+def draw_fire_alert(frame, target_id=None):
+    """Display 'Target X is on fire!' text in red at the top of the video feed."""
+    img_h, img_w = frame.shape[:2]
+    # Calculate text size for centering horizontally
+    if target_id is not None:
+        text = f"Target {target_id} is on fire!"
+    else:
+        text = "FIRE!"
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 3.0
+    thickness = 10
+    (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+    # Center horizontally, position at top
+    x = (img_w - text_width) // 2
+    y = text_height + 50  # 50 pixels from top
+    # Draw black outline for visibility
+    cv2.putText(frame, text, (x, y), font, font_scale, (0, 0, 0), thickness + 5)
+    # Draw the text in red (BGR: 0, 0, 255)
+    cv2.putText(frame, text, (x, y), font, font_scale, (0, 0, 255), thickness)
+
+def draw_firefighted_alert(frame):
+    """Display large Fire Extinguished! text in green at the top of the video feed."""
+    img_h, img_w = frame.shape[:2]
+    # Calculate text size for centering horizontally
+    text = "Fire Extinguished!"
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 3.0
+    thickness = 10
+    (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+    # Center horizontally, position at top
+    x = (img_w - text_width) // 2
+    y = text_height + 50  # 50 pixels from top
+    # Draw black outline for visibility
+    cv2.putText(frame, text, (x, y), font, font_scale, (0, 0, 0), thickness + 5)
+    # Draw the text in green (BGR: 0, 255, 0)
+    cv2.putText(frame, text, (x, y), font, font_scale, (0, 255, 0), thickness)
+
+def send_fire_udp(value, ip, port):
+    """Send a boolean byte (0 or 1) over UDP to the fire system."""
+    payload = bytes([1 if value else 0])
+    try:
+        fire_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sent = fire_sock.sendto(payload, (ip, port))
+        print(f"Fire UDP: Sent {value} to {ip}:{port} ({sent} bytes)")
+        fire_sock.close()
+    except socket.error as e:
+        print(f"Fire UDP send error: {e}")
+
+def draw_fire_udp_debug(frame, dx, dy, theta_deg, state):
+    """Draw debug panel showing UDP values being sent during fire state."""
+    img_h, img_w = frame.shape[:2]
+    
+    # Panel position (top left, below any fire alert text)
+    panel_x = 10
+    panel_y = 120
+    
+    # Draw semi-transparent background
+    cv2.rectangle(frame, (panel_x - 5, panel_y - 5), (panel_x + 280, panel_y + 120), (0, 0, 0), -1)
+    cv2.rectangle(frame, (panel_x - 5, panel_y - 5), (panel_x + 280, panel_y + 120), (0, 165, 255), 2)  # Orange border
+    
+    # Header
+    cv2.putText(frame, "FIRE UDP DEBUG", (panel_x, panel_y + 20), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)  # Orange
+    
+    # State
+    cv2.putText(frame, f"State: {state}", (panel_x, panel_y + 45), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    
+    # dx value
+    cv2.putText(frame, f"dx: {dx:+8.1f}", (panel_x, panel_y + 70), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 200, 255), 2)  # Light blue
+    
+    # dy value
+    cv2.putText(frame, f"dy: {dy:+8.1f}", (panel_x, panel_y + 95), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 255, 200), 2)  # Light green
+    
+    # theta value
+    cv2.putText(frame, f"theta: {theta_deg:+7.1f} deg", (panel_x, panel_y + 115), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)  # Yellow
+
 def draw_wasd_keys(frame, pressed_key=None, dy=0, dx=0):
     """Draw WASD key visual on bottom right of frame. Highlight pressed key and show dx/dy values."""
     img_h, img_w = frame.shape[:2]
@@ -232,6 +312,69 @@ def bouncing_ball(dy, dx, ball_start):
     '''bouncing ball function - placeholder for boundary handling'''
     return dy, dx
 
+def get_turret_endpoint(turret_corners, frame, grid_width, grid_height, distance_grid_units):
+    """
+    Calculate endpoint position that is 'distance_grid_units' north of the turret
+    based on its orientation.
+    
+    'North' is defined as perpendicular to the top edge of the ArUco marker,
+    pointing away from the marker (the forward direction).
+    
+    Parameters:
+    - turret_corners: ArUco marker corners [top-left, top-right, bottom-right, bottom-left]
+    - frame: current video frame (for dimensions)
+    - grid_width, grid_height: grid dimensions
+    - distance_grid_units: how many grid squares north of turret
+    
+    Returns:
+    - (endpoint_grid_x, endpoint_grid_y): grid coordinates of the endpoint
+    - (endpoint_pixel_x, endpoint_pixel_y): pixel coordinates of the endpoint
+    """
+    img_h, img_w = frame.shape[:2]
+    pts = turret_corners.reshape((4, 2))  # In pixel coordinates
+    
+    # Get top-left and top-right corners (indices 0 and 1)
+    top_left = pts[0]
+    top_right = pts[1]
+    
+    # Calculate center of top edge (in pixels)
+    top_center_px = (top_left + top_right) / 2
+    
+    # Vector from top-left to top-right (top edge direction)
+    top_edge = top_right - top_left
+    
+    # Forward direction is perpendicular to top edge (90° CCW from top edge)
+    # Rotate 90° CCW: (x, y) -> (-y, x)
+    forward_x = -top_edge[1]
+    forward_y = top_edge[0]
+    
+    # Normalize the forward vector
+    forward_length = np.sqrt(forward_x**2 + forward_y**2)
+    if forward_length > 0:
+        forward_x /= forward_length
+        forward_y /= forward_length
+    
+    # Convert distance from grid units to pixels
+    pixels_per_grid_x = img_w / grid_width
+    pixels_per_grid_y = img_h / grid_height
+    # Use average for distance calculation
+    pixels_per_grid = (pixels_per_grid_x + pixels_per_grid_y) / 2
+    distance_pixels = distance_grid_units * pixels_per_grid
+    
+    # Calculate endpoint in pixels
+    endpoint_pixel_x = top_center_px[0] + forward_x * distance_pixels
+    endpoint_pixel_y = top_center_px[1] + forward_y * distance_pixels
+    
+    # Convert to grid coordinates
+    endpoint_grid_x = int(endpoint_pixel_x / img_w * grid_width)
+    endpoint_grid_y = int(endpoint_pixel_y / img_h * grid_height)
+    
+    # Clip to grid bounds
+    endpoint_grid_x = max(0, min(grid_width - 1, endpoint_grid_x))
+    endpoint_grid_y = max(0, min(grid_height - 1, endpoint_grid_y))
+    
+    return (endpoint_grid_x, endpoint_grid_y), (int(endpoint_pixel_x), int(endpoint_pixel_y))
+
 def get_2d_angle_from_corners(corners):
     """
     Calculate 2D rotation angle from ArUco marker corners.
@@ -363,13 +506,16 @@ import math
 ''' ====================== CONFIGURATION CONSTANTS ====================== '''
 # === ArUco Marker Settings ===
 MARKER_SIZE = 40                    # ArUco marker size in mm
-BALL_ID = 8                         # Ball ArUco marker ID
-END_POINTS = {2:[18,20], 5:[15,20], 6:[6,30]}  # Target endpoints {marker_id: [y, x]}
+BALL_ID = 9                         # Ball ArUco marker ID
+TURRET_ID = 10                      # Water turret ArUco marker ID
+TURRET_ENDPOINT_DISTANCE = 4        # Grid squares north of turret for endpoint
+END_POINTS = {1:[15,8], 2:[5,20], 3:[15,34]}  # Target endpoints {marker_id: [y, x]}
+#END_POINTS = {1:[18,8], 2:[5,17], 3:[15,34], 4:[10,12], 5:[5,23], 6:[12,30]}
 
 # === Grid Settings ===
-GRID_HEIGHT = 20                    # Grid rows
-GRID_WIDTH = 40                     # Grid columns
-OBSTACLE_RADIUS = 2               # Radius around obstacles (grid units)
+GRID_HEIGHT = 40                    # Grid rows
+GRID_WIDTH = 80                     # Grid columns
+OBSTACLE_RADIUS = 4               # Radius around obstacles (grid units)
 
 # === Camera Settings ===
 CAMERA_WIDTH = 1920                 # Camera resolution width
@@ -379,10 +525,20 @@ INITIAL_EXPOSURE = -10              # Initial exposure value (-13 to 0)
 # === UDP Communication ===
 UDP_IP = "138.38.229.206"           # Raspberry Pi IP address
 UDP_PORT = 50000                    # UDP port number
+FIRE_UDP_IP = "138.38.226.213"      # Fire system UDP IP address
+FIRE_UDP_PORT = 50001               # Fire system UDP port
+
+# === Fire Mode Timing ===
+FIRE_INITIAL_WAIT_MIN = 5        # Minimum seconds to wait before starting fire response
+FIRE_INITIAL_WAIT_MAX = 30        # Maximum seconds to wait before starting fire response
+FIRE_WAIT_BEFORE_ON = 5.0           # Seconds to wait before sending UDP 1 (turret on)
+FIRE_WAIT_BEFORE_OFF = 2.0          # Seconds after UDP 1 before sending UDP 0 (turret off)
+FIRE_WAIT_AFTER_OFF = 3.0           # Seconds after UDP 0 before showing "Fire Extinguished!"
+FIRE_TARGET_TOLERANCE = 1           # Grid cells tolerance for reaching turret endpoint
 
 # === Ball Tracking ===
-BALL_CACHE_TIMEOUT = 0.5            # Seconds before ball cache expires
-TARGET_CACHE_TIMEOUT = 0.5          # Seconds before target cache expires
+BALL_CACHE_TIMEOUT = 2           # Seconds before ball cache expires
+TARGET_CACHE_TIMEOUT = 2          # Seconds before target cache expires
 
 # === Pathfinding & Control ===
 BALL_TARGET_DISTANCE = 4            # Distance threshold for pushing mode
@@ -390,6 +546,7 @@ PHI_THRESHOLD_DEG = 60              # Phi alignment threshold (degrees)
 ATTACK_DISTANCE = 4                 # Distance ball approaches from opposite side
 K1_PUSH_GAIN = 0.8                  # Gain for pushing direction
 K2_PHI_GAIN = 1.2                   # Gain for phi correction
+PUSHING_MODE_DEBOUNCE = 2         # Seconds to lock into pushing mode before allowing exit
 PATH_LENGTH_MULTIPLIER = 1.0 
 DIAGONAL_VAR = 14       # Multiplier for path length speed scaling (1.0 = use raw path length)
 
@@ -482,6 +639,18 @@ target_cache_timeout = TARGET_CACHE_TIMEOUT
 '''Temporary variables'''
 quit_flag = False
 mode = 'auto'  # can be 'auto' or 'manual'
+isFire = False  # Fire alert state - becomes true after pending timer completes
+fire_pending = False  # Fire is pending (waiting for random timer to complete)
+
+# Fire mode state variables
+fire_target_id = None              # ID of target that is "on fire"
+fire_target_reached = False        # Has the fire target reached turret endpoint
+fire_reached_time = None           # Time when fire target reached turret endpoint
+fire_sequence_state = 'inactive'   # States: 'inactive', 'initial_wait', 'active', 'waiting_5s', 'sent_1', 'sent_0', 'firefighted'
+fire_turret_endpoint_grid = None   # Cached turret endpoint in grid coords
+fire_turret_endpoint_pixel = None  # Cached turret endpoint in pixel coords
+fire_initial_wait_duration = 0.0   # Random duration for initial wait (30-60s)
+fire_initial_wait_start = None     # Time when initial wait started
 
 ''' Setup UDP communication '''
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -517,6 +686,40 @@ while True:
             mode = 'manual'
             print ("Manual mode activated. Use 'awsd' keys to control the ball, 'c' to switch to auto mode, 'q' to quit.")
             break
+        if key == ord('f'):
+            if not isFire and not fire_pending:
+                # Start fire pending mode - wait random time before activating
+                import random
+                fire_pending = True
+                fire_target_id = None
+                fire_target_reached = False
+                fire_reached_time = None
+                fire_turret_endpoint_grid = None
+                fire_turret_endpoint_pixel = None
+                fire_sequence_state = 'inactive'
+                # Set random initial wait duration
+                fire_initial_wait_duration = random.uniform(FIRE_INITIAL_WAIT_MIN, FIRE_INITIAL_WAIT_MAX)
+                fire_initial_wait_start = time.perf_counter()
+                # Select random target from available endpoints
+                available_targets = list(end_points.keys())
+                if available_targets:
+                    fire_target_id = random.choice(available_targets)
+                    print(f"Fire pending: Target ID {fire_target_id} will catch fire in {fire_initial_wait_duration:.1f} seconds...")
+                else:
+                    print("Fire pending: No targets available!")
+                    fire_pending = False
+            elif isFire or fire_pending:
+                # Cancel fire mode
+                isFire = False
+                fire_pending = False
+                fire_target_id = None
+                fire_target_reached = False
+                fire_reached_time = None
+                fire_sequence_state = 'inactive'
+                fire_turret_endpoint_grid = None
+                fire_turret_endpoint_pixel = None
+                fire_initial_wait_start = None
+                print(f"Fire alert: DEACTIVATED")
         if key == ord('=') or key == ord('+'):  # Increase exposure (brighter)
             exposure_value = min(0, exposure_value + 1)
             cap.set(cv2.CAP_PROP_EXPOSURE, exposure_value)
@@ -600,6 +803,9 @@ while True:
                 target_last_center = None
                 target_last_corners = None
                 target_last_seen_time = None
+                # Pushing mode debouncing state
+                is_in_pushing_mode = False
+                pushing_mode_enter_time = None
                 
                 while position_status == False and not quit_flag:
                     ret, frame = cap.read()
@@ -623,6 +829,359 @@ while True:
                         mode = 'manual'
                         print ("Manual mode activated. Use 'awsd' keys to control the ball, 'c' to switch to auto mode, 'q' to quit.")
                         break
+                    if key == ord('f'):
+                        if not isFire and not fire_pending:
+                            # Start fire pending mode
+                            import random
+                            fire_pending = True
+                            fire_target_id = None
+                            fire_target_reached = False
+                            fire_reached_time = None
+                            fire_turret_endpoint_grid = None
+                            fire_turret_endpoint_pixel = None
+                            fire_sequence_state = 'inactive'
+                            fire_initial_wait_duration = random.uniform(FIRE_INITIAL_WAIT_MIN, FIRE_INITIAL_WAIT_MAX)
+                            fire_initial_wait_start = time.perf_counter()
+                            available_targets = list(end_points.keys())
+                            if available_targets:
+                                fire_target_id = random.choice(available_targets)
+                                print(f"Fire pending: Target ID {fire_target_id} will catch fire in {fire_initial_wait_duration:.1f} seconds...")
+                            else:
+                                print("Fire pending: No targets available!")
+                                fire_pending = False
+                        elif isFire or fire_pending:
+                            # Cancel fire mode
+                            isFire = False
+                            fire_pending = False
+                            fire_target_id = None
+                            fire_target_reached = False
+                            fire_reached_time = None
+                            fire_sequence_state = 'inactive'
+                            fire_turret_endpoint_grid = None
+                            fire_turret_endpoint_pixel = None
+                            fire_initial_wait_start = None
+                            print(f"Fire alert: DEACTIVATED")
+
+                    # Handle fire pending timer (waiting before fire activates)
+                    if fire_pending and fire_initial_wait_start is not None:
+                        current_time = time.perf_counter()
+                        elapsed = current_time - fire_initial_wait_start
+                        if elapsed >= fire_initial_wait_duration:
+                            # Timer complete - activate fire!
+                            fire_pending = False
+                            isFire = True
+                            fire_sequence_state = 'active'
+                            print(f"Fire alert: ACTIVATED - Target {fire_target_id} is on fire!")
+
+                    # If fire alert is active, handle fire fighting mode
+                    if isFire:
+                        img_h, img_w = frame.shape[:2]
+                        
+                        # Track UDP values for debug display
+                        fire_udp_dx = 0
+                        fire_udp_dy = 0
+                        fire_udp_theta_deg = 0
+                        
+                        # Handle fire sequence state machine (for when target reached turret endpoint)
+                        current_time = time.perf_counter()
+                        
+                        if fire_sequence_state == 'waiting_5s' and fire_reached_time is not None:
+                            # Keep sending 0 dx/dy during waiting period
+                            if ids is not None and ball_id in ids.flatten():
+                                ball_idx_wait = np.where(ids == ball_id)[0][0]
+                                yaw_wait = get_2d_angle_from_corners(corners[ball_idx_wait])
+                                fire_udp_dx = 0
+                                fire_udp_dy = 0
+                                fire_udp_theta_deg = np.degrees(compute_theta_send(yaw_wait))
+                                sock.sendto(struct.pack('<iif', 0, 0, float(compute_theta_send(yaw_wait))), (UDP_IP, UDP_PORT))
+                            if current_time - fire_reached_time >= FIRE_WAIT_BEFORE_ON:
+                                # Send UDP 1
+                                send_fire_udp(1, FIRE_UDP_IP, FIRE_UDP_PORT)
+                                fire_sequence_state = 'sent_1'
+                                fire_reached_time = current_time
+                        elif fire_sequence_state == 'sent_1' and fire_reached_time is not None:
+                            # Keep sending 0 dx/dy during waiting period
+                            if ids is not None and ball_id in ids.flatten():
+                                ball_idx_wait = np.where(ids == ball_id)[0][0]
+                                yaw_wait = get_2d_angle_from_corners(corners[ball_idx_wait])
+                                fire_udp_dx = 0
+                                fire_udp_dy = 0
+                                fire_udp_theta_deg = np.degrees(compute_theta_send(yaw_wait))
+                                sock.sendto(struct.pack('<iif', 0, 0, float(compute_theta_send(yaw_wait))), (UDP_IP, UDP_PORT))
+                            if current_time - fire_reached_time >= FIRE_WAIT_BEFORE_OFF:
+                                # Send UDP 0
+                                send_fire_udp(0, FIRE_UDP_IP, FIRE_UDP_PORT)
+                                fire_sequence_state = 'sent_0'
+                                fire_reached_time = current_time
+                        elif fire_sequence_state == 'sent_0' and fire_reached_time is not None:
+                            # Keep sending 0 dx/dy during waiting period
+                            if ids is not None and ball_id in ids.flatten():
+                                ball_idx_wait = np.where(ids == ball_id)[0][0]
+                                yaw_wait = get_2d_angle_from_corners(corners[ball_idx_wait])
+                                fire_udp_dx = 0
+                                fire_udp_dy = 0
+                                fire_udp_theta_deg = np.degrees(compute_theta_send(yaw_wait))
+                                sock.sendto(struct.pack('<iif', 0, 0, float(compute_theta_send(yaw_wait))), (UDP_IP, UDP_PORT))
+                            if current_time - fire_reached_time >= FIRE_WAIT_AFTER_OFF:
+                                fire_sequence_state = 'firefighted'
+                        elif fire_sequence_state == 'firefighted':
+                            # Keep sending 0 dx/dy during firefighted state
+                            if ids is not None and ball_id in ids.flatten():
+                                ball_idx_wait = np.where(ids == ball_id)[0][0]
+                                yaw_wait = get_2d_angle_from_corners(corners[ball_idx_wait])
+                                fire_udp_dx = 0
+                                fire_udp_dy = 0
+                                fire_udp_theta_deg = np.degrees(compute_theta_send(yaw_wait))
+                                sock.sendto(struct.pack('<iif', 0, 0, float(compute_theta_send(yaw_wait))), (UDP_IP, UDP_PORT))
+                        
+                        # Display appropriate text based on state
+                        if fire_sequence_state == 'firefighted':
+                            draw_firefighted_alert(frame)
+                            # Draw debug panel for firefighted state
+                            draw_fire_udp_debug(frame, fire_udp_dx, fire_udp_dy, fire_udp_theta_deg, fire_sequence_state)
+                            cv2.imshow('frame-image', frame)
+                            continue
+                        else:
+                            draw_fire_alert(frame, fire_target_id)
+                        
+                        # Check if turret is detected and get its endpoint
+                        turret_idx_fire = np.where(ids == TURRET_ID)[0] if ids is not None else np.array([])
+                        if turret_idx_fire.size > 0:
+                            turret_corners_fire = corners[turret_idx_fire[0]]
+                            fire_turret_endpoint_grid, fire_turret_endpoint_pixel = get_turret_endpoint(
+                                turret_corners_fire, frame, grid_width, grid_height, TURRET_ENDPOINT_DISTANCE
+                            )
+                            # Draw turret endpoint
+                            cv2.drawMarker(frame, fire_turret_endpoint_pixel, (255, 255, 0), cv2.MARKER_DIAMOND, 30, 3)
+                            cv2.line(frame, tuple(turret_corners_fire.reshape((4,2)).mean(axis=0).astype(int)), fire_turret_endpoint_pixel, (255, 255, 0), 2)
+                        
+                        # Check if fire target and ball are detected
+                        fire_target_visible = fire_target_id is not None and ids is not None and fire_target_id in ids.flatten()
+                        ball_visible_fire = ids is not None and ball_id in ids.flatten()
+                        
+                        if fire_target_visible and fire_turret_endpoint_grid is not None:
+                            fire_target_idx = np.where(ids == fire_target_id)[0][0]
+                            fire_target_center = get_center(corners[fire_target_idx], frame, grid_width, grid_height)
+                            fire_target_pixel = (int(fire_target_center[0] * img_w / grid_width), int(fire_target_center[1] * img_h / grid_height))
+                            
+                            # Draw fire target marker
+                            cv2.drawMarker(frame, fire_target_pixel, (0, 0, 255), cv2.MARKER_TILTED_CROSS, 40, 3)
+                            cv2.putText(frame, f"FIRE TARGET {fire_target_id}", (fire_target_pixel[0] + 15, fire_target_pixel[1] - 15), 
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                            
+                            # Check if fire target reached turret endpoint
+                            if fire_sequence_state == 'active':
+                                dist_to_turret = abs(fire_target_center[0] - fire_turret_endpoint_grid[0]) + abs(fire_target_center[1] - fire_turret_endpoint_grid[1])
+                                if dist_to_turret <= 1:  # Within 1 grid cell
+                                    print(f"Fire target {fire_target_id} reached turret endpoint! Starting firefighting sequence...")
+                                    fire_target_reached = True
+                                    fire_reached_time = current_time
+                                    fire_sequence_state = 'waiting_5s'
+                                    
+                                    # Send 0 dx/dy over UDP to stop movement, keep theta
+                                    if ball_visible_fire:
+                                        ball_idx_fire_stop = np.where(ids == ball_id)[0][0]
+                                        yaw_fire_stop = get_2d_angle_from_corners(corners[ball_idx_fire_stop])
+                                        next_target_stop = np.array([0, 0, compute_theta_send(yaw_fire_stop), 0])
+                                        sock.sendto(struct.pack('<iif', 0, 0, float(next_target_stop[2])), (UDP_IP, UDP_PORT))
+                                        # Update debug display values
+                                        fire_udp_dx = 0
+                                        fire_udp_dy = 0
+                                        fire_udp_theta_deg = np.degrees(compute_theta_send(yaw_fire_stop))
+                                        print(f"FIRE: Target reached - sending dx=0, dy=0, theta={np.degrees(yaw_fire_stop):.1f}°")
+                                elif ball_visible_fire:
+                                    # Do pathfinding and control to push fire target to turret endpoint
+                                    ball_idx_fire = np.where(ids == ball_id)[0][0]
+                                    ball_center_fire = get_center(corners[ball_idx_fire], frame, grid_width, grid_height)
+                                    ball_pixel_fire = (int(ball_center_fire[0] * img_w / grid_width), int(ball_center_fire[1] * img_h / grid_height))
+                                    
+                                    # Draw ball marker
+                                    cv2.drawMarker(frame, ball_pixel_fire, (0, 255, 0), cv2.MARKER_TILTED_CROSS, 40, 2)
+                                    
+                                    # Reset grid and add obstacles (excluding fire target and ball)
+                                    grid.fill(1)
+                                    grid = grid_obstacle(ids, corners, fire_target_id, x_coords, y_coords, grid, radius, frame, grid_width, grid_height)
+                                    
+                                    # Pathfinding: target to turret endpoint
+                                    ts_fire = (max(0, min(grid_height-1, int(fire_target_center[1]))), max(0, min(grid_width-1, int(fire_target_center[0]))))
+                                    ep_fire = (max(0, min(grid_height-1, int(fire_turret_endpoint_grid[1]))), max(0, min(grid_width-1, int(fire_turret_endpoint_grid[0]))))
+                                    path_t2e_fire = tcod.path.path2d(cost=grid, start_points=[ts_fire], end_points=[ep_fire], cardinal=10, diagonal=DIAGONAL_VAR)
+                                    
+                                    if len(path_t2e_fire) > 0:
+                                        _, diagonaldown_path_fire = simplify_path(path_t2e_fire)
+                                        
+                                        # Calculate phi for mode decision
+                                        phi_for_mode_fire = None
+                                        if len(diagonaldown_path_fire) >= 2:
+                                            # Get corners for phi calculation
+                                            ball_corners_fire_phi = corners[ball_idx_fire]
+                                            fire_target_corners_phi = corners[fire_target_idx]
+                                            
+                                            # Calculate phi1 using pixel coordinates
+                                            ball_pts_fire = ball_corners_fire_phi.reshape((4, 2))
+                                            ball_center_px_fire = ball_pts_fire.mean(axis=0)
+                                            target_pts_fire = fire_target_corners_phi.reshape((4, 2))
+                                            target_center_px_fire = target_pts_fire.mean(axis=0)
+                                            phi1_fire = get_phi1_angle(target_center_px_fire, ball_center_px_fire)
+                                            
+                                            # Calculate phi2
+                                            next_waypoint_fire = diagonaldown_path_fire[1]
+                                            phi2_fire = get_phi2_angle(fire_target_center, next_waypoint_fire)
+                                            
+                                            # Calculate phi (angular difference)
+                                            phi_for_mode_fire = compute_phi(phi1_fire, phi2_fire)
+                                        
+                                        # Check ball distance to target for mode selection
+                                        ball_is_close_fire = abs(ball_center_fire[0] - fire_target_center[0]) <= BALL_TARGET_DISTANCE and abs(ball_center_fire[1] - fire_target_center[1]) <= BALL_TARGET_DISTANCE
+                                        phi_is_aligned_fire = phi_for_mode_fire is not None and abs(np.degrees(phi_for_mode_fire)) <= PHI_THRESHOLD_DEG
+                                        
+                                        if ball_is_close_fire and phi_is_aligned_fire and len(diagonaldown_path_fire) >= 2:
+                                            # PUSHING MODE with phi calculations
+                                            print(f"FIRE PUSHING MODE - phi: {np.degrees(phi_for_mode_fire):.1f}° (within ±{PHI_THRESHOLD_DEG}°)")
+                                            
+                                            # Get ball and target corners
+                                            ball_corners_fire_push = corners[ball_idx_fire]
+                                            fire_target_corners_push = corners[fire_target_idx]
+                                            
+                                            # Calculate phi1 and phi2
+                                            ball_pts_push = ball_corners_fire_push.reshape((4, 2))
+                                            ball_center_px_push = ball_pts_push.mean(axis=0)
+                                            target_pts_push = fire_target_corners_push.reshape((4, 2))
+                                            target_center_px_push = target_pts_push.mean(axis=0)
+                                            phi1 = get_phi1_angle(target_center_px_push, ball_center_px_push)
+                                            
+                                            next_waypoint = diagonaldown_path_fire[1]
+                                            phi2 = get_phi2_angle(fire_target_center, next_waypoint)
+                                            phi = compute_phi(phi1, phi2)
+                                            
+                                            # Control system
+                                            k1 = K1_PUSH_GAIN
+                                            k2 = K2_PHI_GAIN
+                                            
+                                            # dx1, dy1: Direction to push target towards waypoint
+                                            dy1 = diagonaldown_path_fire[1][0] - fire_target_center[1]
+                                            dx1 = diagonaldown_path_fire[1][1] - fire_target_center[0]
+                                            
+                                            # dx2, dy2: Direction to move ball to reduce phi to 0
+                                            radius_ball_to_target = np.sqrt((ball_center_fire[0] - fire_target_center[0])**2 + 
+                                                                             (ball_center_fire[1] - fire_target_center[1])**2)
+                                            ball_rel_x_current = radius_ball_to_target * np.sin(phi1)
+                                            ball_rel_y_current = -radius_ball_to_target * np.cos(phi1)
+                                            ball_rel_x_desired = radius_ball_to_target * np.sin(phi2)
+                                            ball_rel_y_desired = -radius_ball_to_target * np.cos(phi2)
+                                            dx2 = ball_rel_x_desired - ball_rel_x_current
+                                            dy2 = ball_rel_y_desired - ball_rel_y_current
+                                            
+                                            # Combine
+                                            dx_out = (k1 * dx1) + (k2 * dx2)
+                                            dy_out = (k1 * dy1) + (k2 * dy2)
+                                            
+                                            # Get yaw and send UDP
+                                            yaw_fire = get_2d_angle_from_corners(corners[ball_idx_fire])
+                                            angle_b2t_fire = np.arctan2(fire_target_center[1] - ball_center_fire[1], fire_target_center[0] - ball_center_fire[0])
+                                            
+                                            path_length_fire = len(path_t2e_fire)
+                                            scaler = math.sqrt(dx_out**2 + dy_out**2)
+                                            if scaler > 0:
+                                                dx_scaled = dx_out / scaler * path_length_fire
+                                                dy_scaled = dy_out / scaler * path_length_fire
+                                            else:
+                                                dx_scaled = 0
+                                                dy_scaled = 0
+                                            next_target_fire = np.array([dy_scaled, dx_scaled, compute_theta_send(yaw_fire), angle_b2t_fire])
+                                            sock.sendto(struct.pack('<iif', int(next_target_fire[0]), int(next_target_fire[1]), float(next_target_fire[2])), (UDP_IP, UDP_PORT))
+                                            # Update debug display values
+                                            fire_udp_dx = dx_scaled
+                                            fire_udp_dy = dy_scaled
+                                            fire_udp_theta_deg = np.degrees(compute_theta_send(yaw_fire))
+                                            print(f"FIRE PUSHING: dx={dx_scaled:.1f}, dy={dy_scaled:.1f}, phi={np.degrees(phi):.1f}°")
+                                            
+                                            # Draw path from target to turret endpoint
+                                            path_pixels_fire = []
+                                            for pt in diagonaldown_path_fire:
+                                                px = int(pt[1] * img_w / grid_width)
+                                                py = int(pt[0] * img_h / grid_height)
+                                                path_pixels_fire.append([px, py])
+                                            if len(path_pixels_fire) > 1:
+                                                cv2.polylines(frame, [np.array(path_pixels_fire, dtype=np.int32)], False, (0, 255, 0), 2)
+                                            
+                                            # Draw phi arrows
+                                            phi_arrow_length = 50
+                                            phi1_end = (int(fire_target_pixel[0] + phi_arrow_length * np.sin(phi1)),
+                                                       int(fire_target_pixel[1] - phi_arrow_length * np.cos(phi1)))
+                                            cv2.arrowedLine(frame, fire_target_pixel, phi1_end, (255, 255, 0), 2, tipLength=0.3)
+                                            phi2_end = (int(fire_target_pixel[0] + phi_arrow_length * np.sin(phi2)),
+                                                       int(fire_target_pixel[1] - phi_arrow_length * np.cos(phi2)))
+                                            cv2.arrowedLine(frame, fire_target_pixel, phi2_end, (255, 0, 255), 2, tipLength=0.3)
+                                        else:
+                                            # BALL-TO-TARGET MODE - move ball to fire target
+                                            phi_str = f"{np.degrees(phi_for_mode_fire):.1f}" if phi_for_mode_fire is not None else "N/A"
+                                            print(f"FIRE B2T MODE - close: {ball_is_close_fire}, phi: {phi_str}° (threshold: ±{PHI_THRESHOLD_DEG}°)")
+                                            
+                                            # Set fire target as obstacle
+                                            mask_fire = (x_coords - fire_target_center[0])**2 + (y_coords - fire_target_center[1])**2 <= radius**2
+                                            grid[mask_fire] = 0
+                                            
+                                            # Calculate fake target (opposite side of turret endpoint)
+                                            if len(path_t2e_fire) >= 2:
+                                                vec_fire = (path_t2e_fire[1][1] - fire_target_center[0], path_t2e_fire[1][0] - fire_target_center[1])
+                                            else:
+                                                vec_fire = (fire_turret_endpoint_grid[0] - fire_target_center[0], fire_turret_endpoint_grid[1] - fire_target_center[1])
+                                            vec_len = np.sqrt(vec_fire[0]**2 + vec_fire[1]**2)
+                                            if vec_len > 0:
+                                                vec_norm = (vec_fire[0] / vec_len, vec_fire[1] / vec_len)
+                                                fake_target_fire = (fire_target_center[0] - ATTACK_DISTANCE * vec_norm[0], 
+                                                                    fire_target_center[1] - ATTACK_DISTANCE * vec_norm[1])
+                                            else:
+                                                fake_target_fire = fire_target_center
+                                            
+                                            # Pathfinding ball to fake target
+                                            bs_fire = (max(0, min(grid_height-1, int(ball_center_fire[1]))), max(0, min(grid_width-1, int(ball_center_fire[0]))))
+                                            ft_fire = (max(0, min(grid_height-1, int(fake_target_fire[1]))), max(0, min(grid_width-1, int(fake_target_fire[0]))))
+                                            path_b2t_fire = tcod.path.path2d(cost=grid, start_points=[bs_fire], end_points=[ft_fire], cardinal=10, diagonal=DIAGONAL_VAR)
+                                            
+                                            if len(path_b2t_fire) > 0:
+                                                _, diagonaldown_b2t_fire = simplify_path(path_b2t_fire)
+                                                if len(diagonaldown_b2t_fire) >= 2:
+                                                    dy_b2t = diagonaldown_b2t_fire[1][0] - ball_center_fire[1]
+                                                    dx_b2t = diagonaldown_b2t_fire[1][1] - ball_center_fire[0]
+                                                    
+                                                    yaw_fire = get_2d_angle_from_corners(corners[ball_idx_fire])
+                                                    angle_b2t_fire = np.arctan2(fire_target_center[1] - ball_center_fire[1], fire_target_center[0] - ball_center_fire[0])
+                                                    
+                                                    path_len_fire = len(path_b2t_fire)
+                                                    scaler = math.sqrt(dx_b2t**2 + dy_b2t**2)
+                                                    if scaler > 0:
+                                                        dx_scaled = dx_b2t / scaler * path_len_fire
+                                                        dy_scaled = dy_b2t / scaler * path_len_fire
+                                                    else:
+                                                        dx_scaled = 0
+                                                        dy_scaled = 0
+                                                    next_target_fire = np.array([dy_scaled, dx_scaled, compute_theta_send(yaw_fire), angle_b2t_fire])
+                                                    sock.sendto(struct.pack('<iif', int(next_target_fire[0]), int(next_target_fire[1]), float(next_target_fire[2])), (UDP_IP, UDP_PORT))
+                                                    # Update debug display values
+                                                    fire_udp_dx = dx_scaled
+                                                    fire_udp_dy = dy_scaled
+                                                    fire_udp_theta_deg = np.degrees(compute_theta_send(yaw_fire))
+                                                    print(f"FIRE B2T: dx={dx_scaled:.1f}, dy={dy_scaled:.1f}")
+                                                    
+                                                    # Draw path
+                                                    path_pixels_fire = []
+                                                    for pt in diagonaldown_b2t_fire:
+                                                        px = int(pt[1] * img_w / grid_width)
+                                                        py = int(pt[0] * img_h / grid_height)
+                                                        path_pixels_fire.append([px, py])
+                                                    if len(path_pixels_fire) > 1:
+                                                        cv2.polylines(frame, [np.array(path_pixels_fire, dtype=np.int32)], False, (255, 0, 0), 2)
+                                            
+                                            # Draw fake target
+                                            fake_pixel_fire = (int(fake_target_fire[0] * img_w / grid_width), int(fake_target_fire[1] * img_h / grid_height))
+                                            cv2.drawMarker(frame, fake_pixel_fire, (255, 0, 255), cv2.MARKER_DIAMOND, 30, 2)
+                        
+                        # Draw fire UDP debug panel
+                        draw_fire_udp_debug(frame, fire_udp_dx, fire_udp_dy, fire_udp_theta_deg, fire_sequence_state)
+                        cv2.imshow('frame-image', frame)
+                        continue
 
                     # Check if current target is still visible
                     target_visible = ids is not None and len(ids) > 0 and keys in ids.flatten()
@@ -800,8 +1359,28 @@ while True:
                             ball_is_close = abs(ball_start[0] - target_start[0]) <= BALL_TARGET_DISTANCE and abs(ball_start[1] - target_start[1]) <= BALL_TARGET_DISTANCE
                             phi_is_aligned = phi_for_mode is not None and abs(np.degrees(phi_for_mode)) <= PHI_THRESHOLD_DEG
                             
-                            # Enter pushing mode only if ball is close AND properly aligned
-                            if not (ball_is_close and phi_is_aligned):
+                            # Pushing mode debouncing logic
+                            should_be_in_pushing_mode = ball_is_close and phi_is_aligned
+                            
+                            if should_be_in_pushing_mode and not is_in_pushing_mode:
+                                # Enter pushing mode and start debounce timer
+                                is_in_pushing_mode = True
+                                pushing_mode_enter_time = time.perf_counter()
+                                print(f"Entering PUSHING MODE - debounce locked for {PUSHING_MODE_DEBOUNCE}s")
+                            elif is_in_pushing_mode and not should_be_in_pushing_mode:
+                                # Check if we've been in pushing mode long enough to allow exit
+                                time_in_pushing_mode = time.perf_counter() - pushing_mode_enter_time
+                                if time_in_pushing_mode >= PUSHING_MODE_DEBOUNCE:
+                                    # Debounce time elapsed, allow exit from pushing mode
+                                    is_in_pushing_mode = False
+                                    pushing_mode_enter_time = None
+                                    print(f"Exiting PUSHING MODE - debounce time elapsed ({time_in_pushing_mode:.2f}s)")
+                                else:
+                                    # Still within debounce period, stay in pushing mode
+                                    print(f"PUSHING MODE locked - {PUSHING_MODE_DEBOUNCE - time_in_pushing_mode:.2f}s remaining")
+                            
+                            # Enter pushing mode only if ball is close AND properly aligned (with debouncing)
+                            if not is_in_pushing_mode:
                                 # BALL-TO-TARGET MODE - ball needs to get closer or better aligned
                                 phi_str = f"{np.degrees(phi_for_mode):.1f}" if phi_for_mode is not None else "N/A"
                                 print(f"BALL-TO-TARGET MODE - close: {ball_is_close}, phi: {phi_str}° (threshold: ±{PHI_THRESHOLD_DEG}°)")
@@ -1234,6 +1813,56 @@ while True:
             mode = 'auto'
             print("Auto mode activated: normal operation")
             break
+        elif key == ord('f'):
+            isFire = not isFire
+            if isFire:
+                import random
+                fire_target_id = None
+                fire_target_reached = False
+                fire_reached_time = None
+                fire_sequence_state = 'active'
+                fire_turret_endpoint_grid = None
+                fire_turret_endpoint_pixel = None
+                available_targets = list(end_points.keys())
+                if available_targets:
+                    fire_target_id = random.choice(available_targets)
+                    print(f"Fire alert: ACTIVATED - Target ID {fire_target_id} is ON FIRE!")
+                else:
+                    print("Fire alert: ACTIVATED but no targets available!")
+                    isFire = False
+            else:
+                fire_target_id = None
+                fire_target_reached = False
+                fire_reached_time = None
+                fire_sequence_state = 'inactive'
+                fire_turret_endpoint_grid = None
+                fire_turret_endpoint_pixel = None
+                print(f"Fire alert: DEACTIVATED")
+        
+        # If fire alert is active, display fire screen and skip normal processing
+        if isFire:
+            # Handle fire sequence state machine
+            current_time_fire = time.perf_counter()
+            if fire_sequence_state == 'waiting_5s' and fire_reached_time is not None:
+                if current_time_fire - fire_reached_time >= 5.0:
+                    send_fire_udp(1, FIRE_UDP_IP, FIRE_UDP_PORT)
+                    fire_sequence_state = 'sent_1'
+                    fire_reached_time = current_time_fire
+            elif fire_sequence_state == 'sent_1' and fire_reached_time is not None:
+                if current_time_fire - fire_reached_time >= 2.0:
+                    send_fire_udp(0, FIRE_UDP_IP, FIRE_UDP_PORT)
+                    fire_sequence_state = 'sent_0'
+                    fire_reached_time = current_time_fire
+            elif fire_sequence_state == 'sent_0' and fire_reached_time is not None:
+                if current_time_fire - fire_reached_time >= 3.0:
+                    fire_sequence_state = 'firefighted'
+            
+            if fire_sequence_state == 'firefighted':
+                draw_firefighted_alert(frame)
+            else:
+                draw_fire_alert(frame, fire_target_id)
+            cv2.imshow('frame-image', frame)
+            continue
         
         # Update held key if new key pressed
         if new_key_pressed is not None:
@@ -1265,6 +1894,7 @@ while True:
             print('no movement key pressed')
 
         sock.sendto(struct.pack('<iif', int(next_target[0]), int(next_target[1]), float(next_target[2])), (UDP_IP, UDP_PORT))
+        print(f"MANUAL UDP: dx={int(next_target[1])}, dy={int(next_target[0])}, theta={np.degrees(next_target[2]):.1f}° (raw yaw={np.degrees(yaw):.1f}°)")
         
         # Draw WASD visual (only in manual mode)
         draw_wasd_keys(frame, pressed_key=pressed_key, dy=next_target[0], dx=next_target[1])
